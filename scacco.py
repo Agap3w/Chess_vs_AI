@@ -10,12 +10,10 @@
 # VERY MINOR:
 # scelgo bianco o nero
 # aggiungere pulsante per arrendersi / chiedere la patta
-# miglioro selected square (le metto entrambe?)
 # suono mangio su en passant
 # quando sono in promo menu posso spammare il suono mmmmm
 # customizzo grafica pezzi
-# Move Highlighting: Show legal moves for the selected piece NB attivo solo dopo mossa irregolare
-# Piece Capturing Animation (Optional): Provide visual feedback for captures. gIdea= barra nera laterale in cui scorrono dal basso verso l'alto gli "spiriti" dei pezzi, con le ali che flappano e un breve bubble text tipo "was I a good {piece}" 
+# Segnalo Mossa Irregolare: suono, highlight rosso, mostro possibili legal moves? 
 
 # DOUBT:
 # sql
@@ -24,7 +22,7 @@
 
 import pygame
 import chess
-from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT
+from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE
 
 class ChessGame:
     def __init__(self):
@@ -122,6 +120,192 @@ class ChessGame:
                 self.gui.draw_promotion_menu(promotion_square, 
                                           self.game_logic.board.turn)
 
+class GameLogic:
+    def __init__(self):
+        self.board = chess.Board()
+        self.selected_square = None  # To store the currently selected square
+        self.awaiting_promotion = False  # New flag for promotion state
+        self.promotion_move = None  # Store the potential promotion move
+
+    #converte posizione del mouse in square (per localizzare click?)
+    def get_square_under_mouse(self, pos):
+        x, y = pos
+        col = x // SQUARE_SIZE
+        row = 7 - (y // SQUARE_SIZE)
+        return chess.square(col, row)
+        
+    def get_promotion_square(self):
+        """Returns the square where promotion is happening if awaiting promotion."""
+        return self.promotion_move.to_square if self.awaiting_promotion else None
+    
+    #check per GameOver (incluso Stallo)
+    def is_game_over(self):
+        if self.board.is_checkmate():
+            print("Checkmate!")
+            return 1
+        elif self.board.is_stalemate() or self.board.is_insufficient_material():
+            print("Draw!")
+            return 2
+        return 0
+
+    def process_click(self, pos):
+        """Process a mouse click and return information about the resulting move."""
+        clicked_square = self.get_square_under_mouse(pos)
+        
+        # Handle promotion selection if we're awaiting one
+        if self.awaiting_promotion:
+            promotion_piece = self._handle_promotion_selection(pos)
+            if promotion_piece:
+                move = chess.Move(
+                    self.promotion_move.from_square,
+                    self.promotion_move.to_square,
+                    promotion=promotion_piece
+                )
+                self.board.push(move)
+                self.awaiting_promotion = False
+                self.promotion_move = None
+                self.selected_square = None
+                return self._create_move_info(move=move, is_check=self.board.is_check())
+            return self._create_move_info()
+
+        # Handle piece selection and movement
+        if self.selected_square is None:
+            return self._handle_first_selection(clicked_square)
+        else:
+            return self._handle_second_selection(clicked_square)
+
+    def _handle_first_selection(self, clicked_square):
+        """Handle the first click to select a piece."""
+        piece = self.board.piece_at(clicked_square)
+        if piece and piece.color == self.board.turn:
+            self.selected_square = clicked_square
+            return self._create_move_info(square=clicked_square)
+        return self._create_move_info()
+
+    def _handle_second_selection(self, clicked_square):
+        """Handle the second click to move a piece or select a different piece."""
+        piece = self.board.piece_at(clicked_square)
+        
+        # If clicking another friendly piece, switch selection
+        if piece and piece.color == self.board.turn and clicked_square != self.selected_square:
+            self.selected_square = clicked_square
+            return self._create_move_info(square=clicked_square)
+        
+        # Try to make a move
+        move = chess.Move(self.selected_square, clicked_square)
+        
+        # Check for promotion
+        current_piece = self.board.piece_at(self.selected_square)
+        if self._is_promotion_move(current_piece, clicked_square):
+            self.awaiting_promotion = True
+            self.promotion_move = move
+            return self._create_move_info(square=self.selected_square, awaiting_promotion=True)
+        
+        # Make the move if legal
+        if move in self.board.legal_moves:
+            captured_piece = self.board.piece_at(clicked_square)
+            self.board.push(move)
+            self.selected_square = None
+            return self._create_move_info(
+                move=move,
+                captured_piece=captured_piece,
+                is_check=self.board.is_check()
+            )
+        
+        return self._create_move_info(square=self.selected_square)
+
+    def _is_promotion_move(self, piece, target_square):
+        """Check if a move would result in a pawn promotion."""
+        if not piece or piece.piece_type != chess.PAWN:
+            return False
+        return (piece.color == chess.WHITE and chess.square_rank(target_square) == 7) or \
+            (piece.color == chess.BLACK and chess.square_rank(target_square) == 0)
+
+    def _handle_promotion_selection(self, pos):
+        """Convert click position to promotion piece selection."""
+        x, y = pos
+        col = self.promotion_move.to_square % 8
+        row = 7 if self.board.turn else 0
+        
+        if col * SQUARE_SIZE <= x <= (col + 1) * SQUARE_SIZE:
+            piece_y = (7 - row) * SQUARE_SIZE if self.board.turn else row * SQUARE_SIZE
+            piece_positions = [
+                (piece_y, chess.QUEEN),
+                (piece_y + SQUARE_SIZE, chess.ROOK),
+                (piece_y + 2 * SQUARE_SIZE, chess.BISHOP),
+                (piece_y + 3 * SQUARE_SIZE, chess.KNIGHT)
+            ]
+            
+            for start_y, piece in piece_positions:
+                if start_y <= y <= start_y + SQUARE_SIZE:
+                    return piece
+        return None
+
+    def _create_move_info(self, square=None, move=None, captured_piece=None, is_check=False, awaiting_promotion=False):
+        """Create a standardized move information dictionary."""
+        return {
+            'selected_square': square,
+            'move': move,
+            'captured_piece': captured_piece,
+            'is_check': is_check,
+            'awaiting_promotion': awaiting_promotion or self.awaiting_promotion
+        }
+
+class BoardScore:
+    def __init__(self, board):
+        self.board = board
+
+    def get_score(self):
+        """Returns a score for the current board position."""
+        score = 0
+        for square in chess.SQUARES:
+            piece = self.board.piece_at(square)
+            if piece:
+                piece_value = self._get_piece_value(piece)
+                if piece.color == chess.WHITE:
+                    score += piece_value
+                else:
+                    score -= piece_value
+
+        score += (self._get_possible_moves(chess.WHITE) - self._get_possible_moves(chess.BLACK)) * 0.05 # Reward white for having more moves, penalize black
+        score -= (self._get_threatened_pieces(chess.WHITE) - self._get_threatened_pieces(chess.BLACK)) * 0.01 # pezzi minacciati
+        score += self._get_check_status() #scaccomatto e scacco
+
+        return score
+
+    def _get_piece_value(self, piece):
+        """Return a basic piece value."""
+        piece_values = {
+            chess.PAWN: 1,
+            chess.KNIGHT: 3.2,
+            chess.BISHOP: 3.3,
+            chess.ROOK: 5,
+            chess.QUEEN: 9,
+            chess.KING: 1000
+        }
+        return piece_values.get(piece.piece_type, 0)
+
+    def _get_possible_moves(self, color):
+        """Count the number of legal moves for the given color."""
+        return len(list(self.board.legal_moves.filter(color=color)))
+    
+    def _get_check_status(self):
+        """Returns a score modifier based on check status."""
+        if self.board.is_checkmate():
+            return -1000  # Large negative value if the player is in checkmate
+        elif self.board.is_check():
+            return -5  # Moderate penalty for being in check
+        return 0
+    
+    def _get_threatened_pieces(self, color):
+        threatened_value = 0
+        for square in chess.SQUARES:
+            piece = self.board.piece_at(square)
+            if piece and piece.color == color:
+                if any(self.board.is_attacked_by(not color, square)):
+                    threatened_value += self._get_piece_value(piece) * 0.5
+        return threatened_value
+
 class GUI:
     def __init__(self):
         self.screen = None
@@ -135,12 +319,12 @@ class GUI:
         
         # Try different fonts
         try:
-            self.font = pygame.font.SysFont(FONT[0], 60)  # Windows
+            self.font = pygame.font.SysFont(FONT[0], FONT_SIZE)  # Windows
         except:
             try:
-                self.font = pygame.font.SysFont(FONT[1], 60)  # Alternative
+                self.font = pygame.font.SysFont(FONT[1], FONT_SIZE)  # Alternative
             except:
-                self.font = pygame.font.Font(None, 60)  # Fallback
+                self.font = pygame.font.Font(None, FONT_SIZE)  # Fallback
 
     def get_submit_button_rect(self):
         return pygame.Rect(WIDTH // 2 - 50, HEIGHT // 2 + 50, 100, 50)
@@ -275,136 +459,6 @@ class SoundManager:
                 sound.stop()
         pygame.mixer.quit()
 
-class GameLogic:
-    def __init__(self):
-        self.board = chess.Board()
-        self.selected_square = None  # To store the currently selected square
-        self.awaiting_promotion = False  # New flag for promotion state
-        self.promotion_move = None  # Store the potential promotion move
-
-    #converte posizione del mouse in square (per localizzare click?)
-    def get_square_under_mouse(self, pos):
-        x, y = pos
-        col = x // SQUARE_SIZE
-        row = 7 - (y // SQUARE_SIZE)
-        return chess.square(col, row)
-        
-    def get_promotion_square(self):
-        """Returns the square where promotion is happening if awaiting promotion."""
-        return self.promotion_move.to_square if self.awaiting_promotion else None
-    
-    #check per GameOver (incluso Stallo)
-    def is_game_over(self):
-        if self.board.is_checkmate():
-            print("Checkmate!")
-            return 1
-        elif self.board.is_stalemate() or self.board.is_insufficient_material():
-            print("Draw!")
-            return 2
-        return 0
-
-    def process_click(self, pos):
-        """Process a mouse click and return information about the resulting move."""
-        clicked_square = self.get_square_under_mouse(pos)
-        
-        # Handle promotion selection if we're awaiting one
-        if self.awaiting_promotion:
-            promotion_piece = self._handle_promotion_selection(pos)
-            if promotion_piece:
-                move = chess.Move(
-                    self.promotion_move.from_square,
-                    self.promotion_move.to_square,
-                    promotion=promotion_piece
-                )
-                self.board.push(move)
-                self.awaiting_promotion = False
-                self.promotion_move = None
-                self.selected_square = None
-                return self._create_move_info(move=move, is_check=self.board.is_check())
-            return self._create_move_info()
-
-        # Handle piece selection and movement
-        if self.selected_square is None:
-            return self._handle_first_selection(clicked_square)
-        else:
-            return self._handle_second_selection(clicked_square)
-
-    def _handle_first_selection(self, clicked_square):
-        """Handle the first click to select a piece."""
-        piece = self.board.piece_at(clicked_square)
-        if piece and piece.color == self.board.turn:
-            self.selected_square = clicked_square
-            return self._create_move_info(square=clicked_square)
-        return self._create_move_info()
-
-    def _handle_second_selection(self, clicked_square):
-        """Handle the second click to move a piece or select a different piece."""
-        piece = self.board.piece_at(clicked_square)
-        
-        # If clicking another friendly piece, switch selection
-        if piece and piece.color == self.board.turn and clicked_square != self.selected_square:
-            self.selected_square = clicked_square
-            return self._create_move_info(square=clicked_square)
-        
-        # Try to make a move
-        move = chess.Move(self.selected_square, clicked_square)
-        
-        # Check for promotion
-        current_piece = self.board.piece_at(self.selected_square)
-        if self._is_promotion_move(current_piece, clicked_square):
-            self.awaiting_promotion = True
-            self.promotion_move = move
-            return self._create_move_info(square=self.selected_square, awaiting_promotion=True)
-        
-        # Make the move if legal
-        if move in self.board.legal_moves:
-            captured_piece = self.board.piece_at(clicked_square)
-            self.board.push(move)
-            self.selected_square = None
-            return self._create_move_info(
-                move=move,
-                captured_piece=captured_piece,
-                is_check=self.board.is_check()
-            )
-        
-        return self._create_move_info(square=self.selected_square)
-
-    def _is_promotion_move(self, piece, target_square):
-        """Check if a move would result in a pawn promotion."""
-        if not piece or piece.piece_type != chess.PAWN:
-            return False
-        return (piece.color == chess.WHITE and chess.square_rank(target_square) == 7) or \
-            (piece.color == chess.BLACK and chess.square_rank(target_square) == 0)
-
-    def _handle_promotion_selection(self, pos):
-        """Convert click position to promotion piece selection."""
-        x, y = pos
-        col = self.promotion_move.to_square % 8
-        row = 7 if self.board.turn else 0
-        
-        if col * SQUARE_SIZE <= x <= (col + 1) * SQUARE_SIZE:
-            piece_y = (7 - row) * SQUARE_SIZE if self.board.turn else row * SQUARE_SIZE
-            piece_positions = [
-                (piece_y, chess.QUEEN),
-                (piece_y + SQUARE_SIZE, chess.ROOK),
-                (piece_y + 2 * SQUARE_SIZE, chess.BISHOP),
-                (piece_y + 3 * SQUARE_SIZE, chess.KNIGHT)
-            ]
-            
-            for start_y, piece in piece_positions:
-                if start_y <= y <= start_y + SQUARE_SIZE:
-                    return piece
-        return None
-
-    def _create_move_info(self, square=None, move=None, captured_piece=None, is_check=False, awaiting_promotion=False):
-        """Create a standardized move information dictionary."""
-        return {
-            'selected_square': square,
-            'move': move,
-            'captured_piece': captured_piece,
-            'is_check': is_check,
-            'awaiting_promotion': awaiting_promotion or self.awaiting_promotion
-        }
 
 def main():
     game = ChessGame()  # Create the ChessGame instance

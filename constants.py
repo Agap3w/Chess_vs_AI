@@ -1,5 +1,5 @@
 DIMENSION = 8
-SQUARE_SIZE = 80
+SQUARE_SIZE = 100
 WIDTH = HEIGHT = DIMENSION * SQUARE_SIZE
 FPS = 30
 
@@ -12,3 +12,4 @@ UNICODE_PIECES = {
 }
 
 FONT = ['segoe ui symbol', 'arial unicode ms']
+FONT_SIZE = int(SQUARE_SIZE*0.75)
