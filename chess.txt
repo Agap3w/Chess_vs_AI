@@ -1,0 +1,53 @@
+❗ MISSING:
+
+1. Gameplay Features:
+- Check/Checkmate Detection: Visual or text-based notification when the game reaches check, checkmate, or stalemate.
+- Pawn Promotion: Handling promotions when a pawn reaches the opposite end. A simple prompt or automatic queen promotion is needed.
+- Game End States: Display appropriate messages for checkmate, stalemate, or draw conditions.
+
+2. User Experience Enhancements:
+- Move Highlighting: Show legal moves for the selected piece.
+- Piece Capturing Animation (Optional): Provide visual feedback for captures.
+- Undo Functionality: Allow players to undo the last move.
+
+3. Advanced Features for AI Integration:
+- Basic AI Player: Implement a simple random-move AI using chess.Board.legal_moves.
+- Minimax Algorithm: Introduce a decision tree for better AI performance.
+- Evaluation Heuristics: Use a simple heuristic like material value for better decision-making.
+
+4. Polishing and Maintenance:
+- Save/Load Game: Serialize the game state for saving and loading.
+- Error Handling: Ensure graceful handling of illegal moves or exceptions during play.
+- Sound Effects (Optional): Add sounds for piece moves and captures.
+
+
+🚀 Suggested ROADMAP:
+
+1. Game Rules: Add checkmate and promotion handling.
+2. UI Enhancements: Highlight moves and introduce undo functionality.
+3. AI Development: Build and refine AI step by step.
+4. Game Persistence: Implement save/load feature.
+5. Polish: Add animations and sounds for better user experience.
+
+
+
+🕐 Deep Dive su Point 1:
+Check/Checkmate Detection: 1-2 hours
+
+The logic is mostly handled by python-chess. You just need to display game-ending messages and handle the is_check() and is_checkmate() methods properly.
+Pawn Promotion: 1-2 hours
+
+Simple automatic promotion to a queen can be quick (~30 minutes).
+If you want a user-selectable piece promotion (like prompting for queen, rook, knight, or bishop), expect ~2 hours for UI work and user input handling.
+Castling: ~1 hour
+
+python-chess already manages legal castling moves. You mainly need to ensure the GUI correctly handles and animates king and rook movement.
+En Passant: 1-1.5 hours
+
+The library handles legality; you only need to ensure captured pawns are removed correctly from the board and display it visually in the GUI.
+
+🔍 Suggested Order:
+1. Check/Checkmate Detection: Handle the endgame messages first.
+2. Pawn Promotion: Start with automatic promotion, then build an interactive version later.
+3. Castling: Ensure that the rook and king move correctly.
+4. En Passant: Test and visually confirm that the captured pawn disappears correctly.
