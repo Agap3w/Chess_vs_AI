@@ -1,6 +1,11 @@
 # TO DO:
-# commento
-# basic ai
+# aggiungo commenti
+
+# AI FUNZIONA!!! PERò 
+## suoni a cazzo 
+## non va il mio promotion menu
+## troppo aggressiva, sacrifica pur di fare scacco e mangiare pezzi (non capisce il valore di pezzo minacciato?)
+## AI doesn't do promotions in this version (da sistemare!)
 
 # MINOR:
 # faccio redraw solo sulle square in cui serve (evitando di appesantire le performance ridisegnando ogni volta tutto)
@@ -19,9 +24,11 @@
 # sql
 # documentation? (es spiegazione lunga funzioni)
 # test?
+# AI ELO evaluation?
 
 import pygame
 import chess
+from AI.heuristic import heuristic_best_move
 from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE
 
 class ChessGame:
@@ -29,15 +36,19 @@ class ChessGame:
         self.gui = GUI()
         self.sound_manager = SoundManager()
         self.game_logic = GameLogic()
+        self.board_score = BoardScore(self.game_logic.board)
+
         self.running = True
         self.gui.init_game()
         self.clock = pygame.time.Clock()  # Initialize the clock
         self.game_state = "intro"
+        self.ai_thinking = False
 
     def main_game_loop(self):
         while self.running:
             # Handle events
             self._handle_events()
+            self._handle_AI_response()
             
             # Update display if needed
             if self.gui.redraw_needed:
@@ -57,13 +68,31 @@ class ChessGame:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 self._handle_mouse_click(event.pos)
     
+    def _handle_AI_response(self):
+        if self.game_state == "playing" and self.ai_thinking and not self.game_logic.awaiting_promotion:
+            ai_move = heuristic_best_move(self.game_logic.board, self.board_score)
+            if ai_move:
+                captured_piece = self.game_logic.board.piece_at(ai_move.to_square)
+                self.sound_manager.play_sounds(
+                    False,  # AI doesn't do promotions in this version
+                    captured_piece,
+                    self.game_logic.board.is_check()
+                )
+                self.gui.redraw_needed = True
+                
+                # Check for game over after AI move
+                if self.game_logic.is_game_over():
+                    self.game_state = "outro"
+            
+            self.ai_thinking = False  # AI turn is complete
+        
     def _handle_mouse_click(self, pos):
         if self.game_state == "intro":
             if self.gui.get_submit_button_rect().collidepoint(pos):
                 self.game_state = "playing"
                 self.gui.redraw_needed = True
         
-        elif self.game_state == "playing":
+        elif self.game_state == "playing" and not self.ai_thinking:
             move_info = self.game_logic.process_click(pos)
             
             # Update display if something changed
@@ -79,6 +108,7 @@ class ChessGame:
                     move_info["captured_piece"],
                     move_info["is_check"]
                 )
+                self.ai_thinking = True
             
             # Check for game over
             if self.game_logic.is_game_over():
@@ -89,6 +119,7 @@ class ChessGame:
             if self.gui.get_submit_button_rect().collidepoint(pos):
                 self.game_state = "intro"
                 self.game_logic = GameLogic()  # Reset game
+                self.board_score = BoardScore(self.game_logic.board)  # Reset BoardScore with new board
                 self.gui.redraw_needed = True
 
     def _update_display(self):
@@ -287,14 +318,26 @@ class BoardScore:
 
     def _get_possible_moves(self, color):
         """Count the number of legal moves for the given color."""
-        return len(list(self.board.legal_moves.filter(color=color)))
+        # Save the current turn
+        original_turn = self.board.turn
+        
+        # Set the board's turn to the color we want to count moves for
+        self.board.turn = color
+        
+        # Count legal moves
+        move_count = len(list(self.board.legal_moves))
+        
+        # Restore the original turn
+        self.board.turn = original_turn
+        
+        return move_count
     
     def _get_check_status(self):
         """Returns a score modifier based on check status."""
         if self.board.is_checkmate():
-            return -1000  # Large negative value if the player is in checkmate
+            return -100  # Large negative value if the player is in checkmate
         elif self.board.is_check():
-            return -5  # Moderate penalty for being in check
+            return -2  # Moderate penalty for being in check
         return 0
     
     def _get_threatened_pieces(self, color):
@@ -302,7 +345,7 @@ class BoardScore:
         for square in chess.SQUARES:
             piece = self.board.piece_at(square)
             if piece and piece.color == color:
-                if any(self.board.is_attacked_by(not color, square)):
+                if self.board.is_attacked_by(not color, square):
                     threatened_value += self._get_piece_value(piece) * 0.5
         return threatened_value
 
