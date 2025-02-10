@@ -1,18 +1,19 @@
-# TO DO:
-# controllo modello score, ancora troppo dumb, attacca "benino" ma non si difende per niente (sistemare threat function?) SE SISTEMO LO SCORE E' FATTA
+#SE SISTEMO LO SCORE E' FATTA
+
+""" TO DO: """
+# controllo modello score, sacrifica donna su pedone
 
 
-
-# MINOR:
+""" MINOR: """
 # non mangia col re
 # non sa dare scacco matto
 # sul retry AI muove bianco e si scazza tutto
 # si sono scazzati i suono con l'AI
 # faccio redraw solo sulle square in cui serve (evitando di appesantire le performance ridisegnando ogni volta tutto)
 # differenziare outro win da outro lose
-# sistemo grafica intro e outro
+# creo menu selezione AI in intro
 
-# VERY MINOR:
+""" VERY MINOR: """
 # colonna A1 non si seleziona
 # se perdo non vedo come
 # scelgo bianco o nero
@@ -22,7 +23,7 @@
 # customizzo grafica pezzi
 # Segnalo Mossa Irregolare: suono, highlight rosso, mostro possibili legal moves? 
 
-# DOUBT:
+""" DOUBT: """
 # sql
 # documentation? (es spiegazione lunga funzioni)
 # test?
@@ -350,36 +351,37 @@ class BoardScore:
 
     def _get_threat_value(self, square, piece_value, color):
         """Calculate threat value considering piece type, attackers/defenders strength"""
-        
+        threat_value = 0
+
         if piece_value == PIECE_VALUES[chess.KING]:
-            return 0
+            return threat_value
 
         # Get attackers and defenders with their values 
         attackers = [(self.board.piece_at(sq), self._get_piece_value(self.board.piece_at(sq))) for sq in self.board.attackers(not color, square)]
         defenders = [(self.board.piece_at(sq), self._get_piece_value(self.board.piece_at(sq)))      for sq in self.board.attackers(color, square)]
 
         if not attackers:
-            return 0
+            return threat_value
 
         # Consider lowest value attacker
         min_attacker = min(attackers, key=lambda x: x[1])
         
         # If piece can be captured by lower value piece
         if min_attacker[1] < piece_value:
-            return (piece_value - min_attacker[1]) / piece_value
+            threat_value = (piece_value - min_attacker[1]) / piece_value
 
         # If undefended or attackers > defenders, assess threat based on relative strengths
         if not defenders or len(attackers) > len(defenders):
             attacker_strength = sum(a[1] for a in attackers)
             defender_strength = sum(d[1] for d in defenders) if defenders else 0
-            return min(0.9, attacker_strength / (attacker_strength + defender_strength))
-        
-        # Otherwise, safe position (no meaningful threat)
-        return 0
+            threat_value = max(threat_value, min(0.9, attacker_strength / (attacker_strength + defender_strength)))
+        if color ==chess.WHITE:
+            threat_value /=2
+        return threat_value
 
     def _get_check_status(self):
 
-        # aggiungo o tolgo mezzo punto per scacco
+        # aggiungo o tolgo un punto per scacco
         if self.board.is_check():
             return -1 if self.board.turn == chess.WHITE else 1
         return 0
@@ -388,7 +390,7 @@ class BoardScore:
         """Calculate mobility advantage for white and black."""
         white_mobility = self._get_possible_moves(chess.WHITE)
         black_mobility = self._get_possible_moves(chess.BLACK)
-        return 0.01 * (white_mobility - black_mobility)
+        return 0.05 * (white_mobility - black_mobility)
 
     def _get_possible_moves(self, color):
         """Conta le legal moves possibili per il colore in arg"""
@@ -427,19 +429,19 @@ class GUI:
     def get_submit_button_rect(self):
         """Bottone per menu intro e outro"""
 
-        return pygame.Rect(WIDTH // 2 - 50, HEIGHT // 2 + 50, 100, 50)
+        return pygame.Rect(WIDTH // 2 - 90, HEIGHT // 2, 200, 100)
 
     def draw_extra(self, title, CTA):
         """Disegno schermate intro e outro, fornendo titolo e CTA bottone"""
 
         self.screen.fill((0, 0, 0))
         text = self.font.render(title, True, (255, 255, 255))
-        self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - text.get_height() // 2))
+        self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 3))
         
         submit_button = self.get_submit_button_rect()
         pygame.draw.rect(self.screen, (0, 255, 0), submit_button)
         button_text = self.font.render(CTA, True, (255, 255, 255))
-        self.screen.blit(button_text, (submit_button.x + (submit_button.width - button_text.get_width()) // 2, submit_button.y + (submit_button.height - button_text.get_height()) // 2))
+        self.screen.blit(button_text, (submit_button.x + (submit_button.width - button_text.get_width()) // 2, submit_button.y-5))
     
     def draw_board(self):
         """Disegno scacchiera"""
