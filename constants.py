@@ -1,7 +1,7 @@
 import chess
 
 DIMENSION = 8
-SQUARE_SIZE = 100
+SQUARE_SIZE = 110
 WIDTH = HEIGHT = DIMENSION * SQUARE_SIZE
 FPS = 30
 
@@ -14,7 +14,7 @@ UNICODE_PIECES = {
 }
 
 FONT = ['segoe ui symbol', 'arial unicode ms']
-FONT_SIZE = int(SQUARE_SIZE*0.75)
+FONT_SIZE = [int(SQUARE_SIZE*0.75), 48, 22, 36]
 
 PIECE_VALUES = {
             chess.PAWN: 10,
@@ -94,3 +94,10 @@ PIECE_POS_TABLE = {
     ]
 }
 
+
+INTRO = [
+    {"title": "Heuristic", "description": "Nato nel 1950, questo algoritmo valuta solo la prossima mossa, scegliendola tra tutte le combinazioni possibili. Si basa su un punteggio della scacchiera (es quanti pezzi ho, etc.).\nDifficoltà : Facile", "cta_text": "Sfida Heuristic AI"},
+    {"title": "Minimax", "description": "Description 2", "cta_text": "Click 2"},
+    {"title": "Reinforcement Learning", "description": "Description 3", "cta_text": "Click 3"},
+    {"title": "Neural Network", "description": "Description 4", "cta_text": "Click 4"},
+]

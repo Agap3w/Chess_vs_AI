@@ -1,25 +1,25 @@
-#SE SISTEMO LO SCORE E' FATTA
+"""PREP MINIMAX: menu selezione AI in intro"""
+### sistemo grafica / titoli etc (devo un po' razionalizzare codice)
+### cancello vecchie fz (draw_extra) e ricado su draw_extra 2 con un if in arg (tipo intro, outro)
+### differenziare outro win da outro lose da outro patta
 
-""" TO DO: """
-# controllo modello score, sacrifica donna su pedone
+"""GO MINIMAX!"""
+# commento
 
 
 """ MINOR: """
-# non mangia col re
-# non sa dare scacco matto
+# vedo se posso evitare alcune fz già presenti in chess (tipo is_gameover?)
 # sul retry AI muove bianco e si scazza tutto
 # si sono scazzati i suono con l'AI
 # faccio redraw solo sulle square in cui serve (evitando di appesantire le performance ridisegnando ogni volta tutto)
-# differenziare outro win da outro lose
-# creo menu selezione AI in intro
 
 """ VERY MINOR: """
+# cos'è quel draw game state
 # colonna A1 non si seleziona
 # se perdo non vedo come
 # scelgo bianco o nero
 # aggiungere pulsante per arrendersi / chiedere la patta
 # suono mangio su en passant
-# quando sono in promo menu posso spammare il suono mmmmm
 # customizzo grafica pezzi
 # Segnalo Mossa Irregolare: suono, highlight rosso, mostro possibili legal moves? 
 
@@ -29,10 +29,12 @@
 # test?
 # AI ELO evaluation?
 
+import textwrap
 import pygame
 import chess
 from AI.heuristic import heuristic_best_move
-from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE, PIECE_VALUES, PIECE_POS_TABLE
+from AI.minimax import minimax_best_move
+from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE, PIECE_VALUES, PIECE_POS_TABLE, INTRO
 
 class ChessGame:
     """main Class che unisce tutte le altre 4 subclass"""
@@ -48,6 +50,7 @@ class ChessGame:
         self.running = True
         self.game_state = "intro"
         self.ai_thinking = False
+        self.opponent = 0
 
         # inizializzo game e clock
         self.gui.init_game()
@@ -84,7 +87,10 @@ class ChessGame:
 
         # se siamo in playing, tocca all'AI e non c'è una promo in ballo, cerco best move
         if self.game_state == "playing" and self.ai_thinking and not self.game_logic.awaiting_promotion:
-            ai_move = heuristic_best_move(self.game_logic.board, self.board_score)
+            if self.opponent == 1:
+                ai_move = heuristic_best_move(self.game_logic.board, self.board_score)
+            elif self.opponent == 2:
+                ai_move = minimax_best_move(self.game_logic.board, self.board_score)
             
             # Se esiste una AI best move, eseguo mossa + suono
             if ai_move:
@@ -105,12 +111,18 @@ class ChessGame:
         
     def _handle_mouse_click(self, pos):
 
-        # se siamo in intro, aspetto click su play
+        # se siamo in intro, aspetto click su una delle 4 AI (che verrà selezionata come opponent)
         if self.game_state == "intro":
-            if self.gui.get_submit_button_rect().collidepoint(pos):
+            if self.gui.get_submit_button_rect()["Heuristic"].collidepoint(pos):
+                self.opponent = 1
                 self.game_state = "playing"
                 self.gui.redraw_needed = True
         
+            if self.gui.get_submit_button_rect()["Minimax"].collidepoint(pos):
+                self.opponent = 2
+                self.game_state = "playing"
+                self.gui.redraw_needed = True
+
         # se invece siamo in playing e non è il turno dell' AI (o non devo selezionare promo menu)
         elif self.game_state == "playing" and (self.game_logic.awaiting_promotion or not self.ai_thinking):
             move_info = self.game_logic.process_click(pos)
@@ -139,7 +151,7 @@ class ChessGame:
         
         # se sono in GameOver, aspetto il click su Retry
         elif self.game_state == "outro":
-            if self.gui.get_submit_button_rect().collidepoint(pos):
+            if self.gui.get_submit_button_rect()["GameOver"].collidepoint(pos):
                 self.game_state = "intro"
                 self.game_logic = GameLogic()  # Reset game
                 self.board_score = BoardScore(self.game_logic.board)  # Reset BoardScore with new board
@@ -147,8 +159,10 @@ class ChessGame:
 
     def _update_display(self):
         """ decide cosa mandare a schermo in base al game_state intro/playing/outro """
+        
         if self.game_state == "intro":
-            self.gui.draw_extra("Chess vs AI", "Play")
+            #self.gui.draw_extra("Chess vs AI", "Play")
+            self.gui.draw_extra2()        
         
         elif self.game_state == "playing":
             self.gui.screen.fill((255, 255, 255))
@@ -198,7 +212,7 @@ class GameLogic:
         if self.board.is_checkmate():
             print("Checkmate!")
             return 1
-        elif self.board.is_stalemate() or self.board.is_insufficient_material():
+        elif self.board.is_stalemate() or self.board.is_insufficient_material() or self.board.is_repetition(3):
             print("Draw!")
             return 2
         return 0
@@ -313,7 +327,7 @@ class BoardScore:
         # se fine partita
         if self.board.is_checkmate():
             return -1000 if self.board.turn == chess.WHITE else 1000
-        if self.board.is_stalemate():
+        if self.board.is_stalemate() or self.board.is_insufficient_material() or self.board.is_repetition(3):
             return 0
         
         # altrimenti inizializzo score e poi lo calcolo iterando per tutti i pezzi score + altri modifier
@@ -376,7 +390,7 @@ class BoardScore:
             defender_strength = sum(d[1] for d in defenders) if defenders else 0
             threat_value = max(threat_value, min(0.9, attacker_strength / (attacker_strength + defender_strength)))
         if color ==chess.WHITE:
-            threat_value /=2
+            threat_value *=0.2
         return threat_value
 
     def _get_check_status(self):
@@ -407,7 +421,10 @@ class GUI:
 
     def __init__(self):
         self.screen = None
-        self.font = None
+        self.piece_font = None      
+        self.title_font = None
+        self.desc_font = None
+        self.cta_font = None
         self.redraw_needed = True
     
     def init_game(self):
@@ -417,30 +434,122 @@ class GUI:
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption("Chess vs AI")
         
-        # Try different fonts
         try:
-            self.font = pygame.font.SysFont(FONT[0], FONT_SIZE)  # Windows
+            self.piece_font = pygame.font.SysFont(FONT[0], FONT_SIZE[0])  # Piece font
+            self.title_font = pygame.font.SysFont(FONT[0], FONT_SIZE[1])  # Title font
+            self.desc_font = pygame.font.SysFont(FONT[0], FONT_SIZE[2])   # Description font
+            self.cta_font = pygame.font.SysFont(FONT[0], FONT_SIZE[3])    # CTA font
         except:
+            
             try:
-                self.font = pygame.font.SysFont(FONT[1], FONT_SIZE)  # Alternative
+                self.piece_font = pygame.font.SysFont(FONT[1], FONT_SIZE[0])
+                self.title_font = pygame.font.SysFont(FONT[1], FONT_SIZE[1])
+                self.desc_font = pygame.font.SysFont(FONT[1], FONT_SIZE[2])
+                self.cta_font = pygame.font.SysFont(FONT[1], FONT_SIZE[3])
             except:
-                self.font = pygame.font.Font(None, FONT_SIZE)  # Fallback
+                self.piece_font = pygame.font.Font(None, FONT_SIZE[0])
+                self.title_font = pygame.font.Font(None, FONT_SIZE[1])
+                self.desc_font = pygame.font.Font(None, FONT_SIZE[2])
+                self.cta_font = pygame.font.Font(None, FONT_SIZE[3])
 
     def get_submit_button_rect(self):
         """Bottone per menu intro e outro"""
+        
+        # Use the same calculations as in draw_extra2
+        rect_width = WIDTH // 4
+        padding = 10
+        button_width = 100
+        button_height = 40
+        
+        # Calculate buttons x positions using the same rectangle positions
+        button_positions = {
+            "Heuristic": pygame.Rect(
+                (0 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # First rectangle
+                HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,  # Same y position as in draw_extra2
+                button_width,
+                button_height
+            ),
+            "Minimax": pygame.Rect(
+                (1 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # Second rectangle
+                HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,
+                button_width,
+                button_height
+            ),
+            "Reinforc": pygame.Rect(
+                (2 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # Third rectangle
+                HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,
+                button_width,
+                button_height
+            ),
+            "NN": pygame.Rect(
+                (3 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # Fourth rectangle
+                HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,
+                button_width,
+                button_height
+            ),
+            "GameOver": pygame.Rect(  # Keep GameOver button centered
+                WIDTH // 2 - 90,
+                HEIGHT // 2,
+                200,
+                100
+            )
+        }
+        
+        return button_positions
 
-        return pygame.Rect(WIDTH // 2 - 90, HEIGHT // 2, 200, 100)
+    def draw_extra2(self):
+        """
+        Draws four rectangles with title, description, and CTA button.
+
+        INTRO: List of dictionaries, each with keys 'title', 'description', and 'cta_text'
+        """
+        self.screen.fill((0,0,0))
+
+        rect_width = WIDTH // 4
+        rect_height = HEIGHT // 1.5
+        padding = 10
+
+        for i, content in enumerate(INTRO):
+            x_pos = i * rect_width
+            rect = pygame.Rect(x_pos + padding, HEIGHT // 4, rect_width - 2 * padding, rect_height)
+            pygame.draw.rect(self.screen, ((255,255,255)), rect, 2)  # Draw rectangle border
+
+            # Title
+            title_text = self.title_font.render(content['title'], True, ((255,255,255)))
+            self.screen.blit(title_text, (rect.x + 10, rect.y + 10))
+
+            # Description
+            wrapped_text = textwrap.wrap(content['description'], width=20)  # Adjust width for wrapping
+            y_offset = 50
+            for line in wrapped_text:
+                desc_text = self.desc_font.render(line, True, (255, 255, 255))
+                self.screen.blit(desc_text, (rect.x + 10, rect.y + y_offset))
+                y_offset += 30
+
+            # CTA Button
+            button_width, button_height = 100, 40
+            button_x = rect.x + (rect.width - button_width) // 2
+            button_y = rect.y + rect.height - button_height - 10
+
+            button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
+            pygame.draw.rect(self.screen, ((0,255,0)), button_rect)
+
+            # Button text
+            button_text = self.cta_font.render("Play", True, ((255,255,255)))
+            self.screen.blit(button_text, (button_x + (button_width - button_text.get_width()) // 2, button_y + (button_height - button_text.get_height()) // 2))
+
+        pygame.display.flip()
 
     def draw_extra(self, title, CTA):
         """Disegno schermate intro e outro, fornendo titolo e CTA bottone"""
 
         self.screen.fill((0, 0, 0))
-        text = self.font.render(title, True, (255, 255, 255))
+        text = self.title_font.render(title, True, (255, 255, 255))
         self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 3))
         
-        submit_button = self.get_submit_button_rect()
+        submit_button = self.get_submit_button_rect()["GameOver"]
         pygame.draw.rect(self.screen, (0, 255, 0), submit_button)
-        button_text = self.font.render(CTA, True, (255, 255, 255))
+        button_text = self.cta_font.render(CTA, True, (255, 255, 255))
         self.screen.blit(button_text, (submit_button.x + (submit_button.width - button_text.get_width()) // 2, submit_button.y-5))
     
     def draw_board(self):
@@ -521,7 +630,7 @@ class GUI:
         """Disegno pezzo."""
 
         color = (255, 255, 255) if color_condition else (0, 0, 0)
-        text = self.font.render(piece, True, color)
+        text = self.piece_font.render(piece, True, color)
         text_rect = text.get_rect(center=(x,y))
         self.screen.blit(text, text_rect)
 
