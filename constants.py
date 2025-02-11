@@ -14,7 +14,7 @@ UNICODE_PIECES = {
 }
 
 FONT = ['segoe ui symbol', 'arial unicode ms']
-FONT_SIZE = [int(SQUARE_SIZE*0.75), 48, 22, 36]
+FONT_SIZE = [int(SQUARE_SIZE*0.75), 38, 18, 36]
 
 PIECE_VALUES = {
             chess.PAWN: 10,
@@ -96,8 +96,8 @@ PIECE_POS_TABLE = {
 
 
 INTRO = [
-    {"title": "Heuristic", "description": "Nato nel 1950, questo algoritmo valuta solo la prossima mossa, scegliendola tra tutte le combinazioni possibili. Si basa su un punteggio della scacchiera (es quanti pezzi ho, etc.).\nDifficoltà : Facile", "cta_text": "Sfida Heuristic AI"},
-    {"title": "Minimax", "description": "Description 2", "cta_text": "Click 2"},
-    {"title": "Reinforcement Learning", "description": "Description 3", "cta_text": "Click 3"},
+    {"title": "Heuristic", "description": "Questo algoritmo rudimentale nasce negli anni '40. Pensa solo al proprio turno, valutando tutte le opzioni possibili e scegliendo la mossa che gli porta il vantaggio immediato maggiore.\nMolto veloce a rispondere.\nDifficoltà: Facile", "cta_text": "Sfida Heuristic AI"},
+    {"title": "Minimax", "description": "Avanziamo negli anni '50. Questo algoritmo analizza fino a tre turni futuri, anticipando le mosse dell'avversario. Leggero aumento del tempo di reazione.\nDifficoltà: Media", "cta_text": "Click 2"},
+    {"title": "Reinforce. Learning", "description": "Description 3", "cta_text": "Click 3"},
     {"title": "Neural Network", "description": "Description 4", "cta_text": "Click 4"},
 ]

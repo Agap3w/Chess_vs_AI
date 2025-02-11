@@ -1,20 +1,21 @@
-"""PREP MINIMAX: menu selezione AI in intro"""
-### sistemo grafica / titoli etc (devo un po' razionalizzare codice)
-### cancello vecchie fz (draw_extra) e ricado su draw_extra 2 con un if in arg (tipo intro, outro)
-### differenziare outro win da outro lose da outro patta
+"""TO DO BEFORE NEXT AI"""
+# finisco di pulire ciclo draw: cancello fz obsolete (draw_extra), e snellisco nuove (helper su textwrap?)
+# differenzio outro win/lose/draw
+# nuova draw deve fare anche outro
 
-"""GO MINIMAX!"""
-# commento
-
+""" NEXT TO DO: """
+# reinforcement learning su modello pretrainato o tutto da zero?
+# come quarto importo Stockfish per showcase API management o mi lancio in un NN supervised learning?
 
 """ MINOR: """
+#  titolo intro
 # vedo se posso evitare alcune fz già presenti in chess (tipo is_gameover?)
 # sul retry AI muove bianco e si scazza tutto
-# si sono scazzati i suono con l'AI
+# si sono scazzati i suoni con l'AI
 # faccio redraw solo sulle square in cui serve (evitando di appesantire le performance ridisegnando ogni volta tutto)
 
 """ VERY MINOR: """
-# cos'è quel draw game state
+# draw game state lo posso spostare in GUI scorporando la logica promo?
 # colonna A1 non si seleziona
 # se perdo non vedo come
 # scelgo bianco o nero
@@ -515,12 +516,19 @@ class GUI:
             pygame.draw.rect(self.screen, ((255,255,255)), rect, 2)  # Draw rectangle border
 
             # Title
-            title_text = self.title_font.render(content['title'], True, ((255,255,255)))
-            self.screen.blit(title_text, (rect.x + 10, rect.y + 10))
+            title_text = content['title']
+            title_lines = textwrap.wrap(title_text, width=10)  # Usa textwrap per andare a capo
+
+            # Renderizza il titolo su più righe, se necessario
+            y_offset_title = rect.y + 10  # Posizione iniziale per il titolo
+            for line in title_lines:
+                title_rendered = self.title_font.render(line, True, (255, 255, 255))
+                self.screen.blit(title_rendered, (rect.x + 10, y_offset_title))
+                y_offset_title += 30  # Aggiungi uno spazio dopo ogni riga del titolo
 
             # Description
             wrapped_text = textwrap.wrap(content['description'], width=20)  # Adjust width for wrapping
-            y_offset = 50
+            y_offset = 90
             for line in wrapped_text:
                 desc_text = self.desc_font.render(line, True, (255, 255, 255))
                 self.screen.blit(desc_text, (rect.x + 10, rect.y + y_offset))

@@ -42,6 +42,7 @@ def minimax_best_move(board, board_score, depth=3):
             board.gives_check(move)
         ), reverse=True)
         
+        # per ora AI gioca solo col nero quindi questa parte non servirebbe ma mi porto avanti
         if maximizing:
             max_eval = float('-inf')
             for move in legal_moves:
@@ -58,8 +59,8 @@ def minimax_best_move(board, board_score, depth=3):
                     break
                     
             return max_eval, best_move
-            
-        else:
+                    
+        else: # se minimizing (=AI gioca col nero)
             min_eval = float('inf')
             for move in legal_moves:
                 board.push(move)
