@@ -1,28 +1,27 @@
-"""TO DO BEFORE NEXT AI"""
-# finisco di pulire ciclo draw: cancello fz obsolete (draw_extra), e snellisco nuove (helper su textwrap?)
-# differenzio outro win/lose/draw
-# nuova draw deve fare anche outro
+""" TO DO: """
+# cerco di capire come importare i dati in un formato X(n,8,8) Y(n,3)
+# mi informo su quale NN posso trainare i dati (parto da un pretrainato? pro & cons?)
 
-""" NEXT TO DO: """
-# reinforcement learning su modello pretrainato o tutto da zero?
-# come quarto importo Stockfish per showcase API management o mi lancio in un NN supervised learning?
 
 """ MINOR: """
-#  titolo intro
+# draw game state lo posso spostare in GUI scorporando la logica promo?
+# evidenzio checkmate (creo draw_checkmate?)
+# colonna A1 non si seleziona
+# AI minimax non evita la patta per ripetizione se è in vantaggio
 # vedo se posso evitare alcune fz già presenti in chess (tipo is_gameover?)
 # sul retry AI muove bianco e si scazza tutto
-# si sono scazzati i suoni con l'AI
 # faccio redraw solo sulle square in cui serve (evitando di appesantire le performance ridisegnando ogni volta tutto)
 
 """ VERY MINOR: """
-# draw game state lo posso spostare in GUI scorporando la logica promo?
-# colonna A1 non si seleziona
-# se perdo non vedo come
+# suoni mangio AI non sempre a fuoco
+# miglioro grafica intro
 # scelgo bianco o nero
-# aggiungere pulsante per arrendersi / chiedere la patta
-# suono mangio su en passant
+# aggiungere pulsante per arrendersi / chiedere la patta (con AI che accetta se suo score >0)
 # customizzo grafica pezzi
 # Segnalo Mossa Irregolare: suono, highlight rosso, mostro possibili legal moves? 
+
+""" NEXT TO DO: """
+# come quarto importo Stockfish per showcase API management o mi lancio in un NN supervised learning?
 
 """ DOUBT: """
 # sql
@@ -35,7 +34,7 @@ import pygame
 import chess
 from AI.heuristic import heuristic_best_move
 from AI.minimax import minimax_best_move
-from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE, PIECE_VALUES, PIECE_POS_TABLE, INTRO
+from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE, PIECE_VALUES, PIECE_POS_TABLE, INTRO, OUTRO
 
 class ChessGame:
     """main Class che unisce tutte le altre 4 subclass"""
@@ -106,6 +105,9 @@ class ChessGame:
                 
                 # Check for game over after AI move (posso toglierlo/spostarlo nel game loop?)
                 if self.game_logic.is_game_over():
+                    self._update_display()
+                    pygame.display.flip()
+                    pygame.time.delay(4000)  # 2 second delay
                     self.game_state = "outro"
             
             self.ai_thinking = False  # AI turn is complete
@@ -162,15 +164,14 @@ class ChessGame:
         """ decide cosa mandare a schermo in base al game_state intro/playing/outro """
         
         if self.game_state == "intro":
-            #self.gui.draw_extra("Chess vs AI", "Play")
-            self.gui.draw_extra2()        
+            self.gui.draw_extra()        
         
         elif self.game_state == "playing":
             self.gui.screen.fill((255, 255, 255))
             self._draw_game_state()
         
         elif self.game_state == "outro":
-            self.gui.draw_extra("Game Over", "Retry")
+            self.gui.draw_extra(self.game_logic.is_game_over())
         
         pygame.display.flip()
 
@@ -212,10 +213,12 @@ class GameLogic:
         # check per GameOver (incluso Stallo)
         if self.board.is_checkmate():
             print("Checkmate!")
-            return 1
+            if self.board.turn:
+                return 1 # white lose = AI won
+            return 2 # black lose = AI lost
         elif self.board.is_stalemate() or self.board.is_insufficient_material() or self.board.is_repetition(3):
             print("Draw!")
-            return 2
+            return 3
         return 0
 
     def process_click(self, pos):
@@ -421,13 +424,17 @@ class GUI:
     """Classe dedicata alla Graphic User Intarface."""
 
     def __init__(self):
-        self.screen = None
+        
         self.piece_font = None      
         self.title_font = None
         self.desc_font = None
         self.cta_font = None
+        self.head_font = None
+        
+        self.screen = None
         self.redraw_needed = True
-    
+        self.intro_image = pygame.image.load('static/title_image.png')
+ 
     def init_game(self):
         """Inizializzo pygame, setto screen e carico i font."""
         
@@ -437,21 +444,27 @@ class GUI:
         
         try:
             self.piece_font = pygame.font.SysFont(FONT[0], FONT_SIZE[0])  # Piece font
-            self.title_font = pygame.font.SysFont(FONT[0], FONT_SIZE[1])  # Title font
-            self.desc_font = pygame.font.SysFont(FONT[0], FONT_SIZE[2])   # Description font
+            self.title_font = pygame.font.Font(FONT[2], FONT_SIZE[1])  # Title font
+            self.desc_font = pygame.font.Font(FONT[3], FONT_SIZE[2])   # Description font
             self.cta_font = pygame.font.SysFont(FONT[0], FONT_SIZE[3])    # CTA font
-        except:
+            self.head_font = pygame.font.Font(FONT[4], FONT_SIZE[4])    # head font
+
+        
+        except Exception as e:
+            print(f"Error loading fonts: {e}")
             
             try:
-                self.piece_font = pygame.font.SysFont(FONT[1], FONT_SIZE[0])
-                self.title_font = pygame.font.SysFont(FONT[1], FONT_SIZE[1])
-                self.desc_font = pygame.font.SysFont(FONT[1], FONT_SIZE[2])
-                self.cta_font = pygame.font.SysFont(FONT[1], FONT_SIZE[3])
+                self.piece_font = pygame.font.SysFont(FONT[0], FONT_SIZE[0])
+                self.title_font = pygame.font.SysFont(FONT[0], FONT_SIZE[1])
+                self.desc_font = pygame.font.SysFont(FONT[0], FONT_SIZE[2])
+                self.cta_font = pygame.font.SysFont(FONT[0], FONT_SIZE[3])
+                self.head_font = pygame.font.SysFont(FONT[0], FONT_SIZE[4])
             except:
                 self.piece_font = pygame.font.Font(None, FONT_SIZE[0])
                 self.title_font = pygame.font.Font(None, FONT_SIZE[1])
                 self.desc_font = pygame.font.Font(None, FONT_SIZE[2])
                 self.cta_font = pygame.font.Font(None, FONT_SIZE[3])
+                self.head_font = pygame.font.SysFont(None, FONT_SIZE[4])
 
     def get_submit_button_rect(self):
         """Bottone per menu intro e outro"""
@@ -468,25 +481,25 @@ class GUI:
                 (0 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # First rectangle
                 HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,  # Same y position as in draw_extra2
                 button_width,
-                button_height
+                button_height+10
             ),
             "Minimax": pygame.Rect(
                 (1 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # Second rectangle
                 HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,
                 button_width,
-                button_height
+                button_height+10
             ),
-            "Reinforc": pygame.Rect(
+            "Reinforc. Learning": pygame.Rect(
                 (2 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # Third rectangle
                 HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,
                 button_width,
-                button_height
+                button_height+10
             ),
-            "NN": pygame.Rect(
+            "Neural Network": pygame.Rect(
                 (3 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # Fourth rectangle
                 HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,
                 button_width,
-                button_height
+                button_height+10
             ),
             "GameOver": pygame.Rect(  # Keep GameOver button centered
                 WIDTH // 2 - 90,
@@ -498,68 +511,60 @@ class GUI:
         
         return button_positions
 
-    def draw_extra2(self):
-        """
-        Draws four rectangles with title, description, and CTA button.
+    def draw_extra(self, id=0):
+        """ disegna schermate extra game (intro e outro)"""
 
-        INTRO: List of dictionaries, each with keys 'title', 'description', and 'cta_text'
-        """
         self.screen.fill((0,0,0))
 
-        rect_width = WIDTH // 4
-        rect_height = HEIGHT // 1.5
-        padding = 10
+        # gestisco la schermata di gameover
+        if id:
+            text = self.title_font.render(OUTRO[id], True, (255, 255, 255))
+            self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 3))
+            
+            submit_button = self.get_submit_button_rect()["GameOver"]
+            pygame.draw.rect(self.screen, (0, 255, 0), submit_button)
+            button_text = self.cta_font.render("Retry", True, (255, 255, 255))
+            self.screen.blit(button_text, (submit_button.x + (submit_button.width - button_text.get_width()) // 2, submit_button.y-5))
+            return
+
+        # titolo nero su sfondo bianco
+        title_rendered = self.head_font.render("Chess vs AI", True, (0,20,0))
+        text_width, text_height = title_rendered.get_size()
+        highlight_rect = pygame.Rect(WIDTH // 2.6 - 10, HEIGHT // 12 - 5, text_width + 20, text_height + 10)
+        pygame.draw.rect(self.screen, (255,255,255), highlight_rect)
+
+        self.screen.blit(title_rendered, (WIDTH  // 2.6, HEIGHT // 12 ))
+        self.screen.blit(self.intro_image, (WIDTH  // 12, HEIGHT // 23))
 
         for i, content in enumerate(INTRO):
-            x_pos = i * rect_width
-            rect = pygame.Rect(x_pos + padding, HEIGHT // 4, rect_width - 2 * padding, rect_height)
-            pygame.draw.rect(self.screen, ((255,255,255)), rect, 2)  # Draw rectangle border
+            
+            # rettangoli
+            rect = pygame.Rect((i * (WIDTH // 4)) + 10, HEIGHT // 4, (WIDTH // 4) - 2 * 10, (HEIGHT // 1.45)) 
+            pygame.draw.rect(self.screen, ((255,255,255)), rect, 2)  
+            
+            # scritte (titolo+descrizione)
+            self._wrapper(content['title'], 10, 225, self.title_font, rect.x) 
+            self._wrapper(content['description'], 20, 90, self.desc_font, rect.x, rect.y) 
 
-            # Title
-            title_text = content['title']
-            title_lines = textwrap.wrap(title_text, width=10)  # Usa textwrap per andare a capo
+            # bottoni CTA
+            button_rect = self.get_submit_button_rect()[INTRO[i]["title"]] 
+            pygame.draw.rect(self.screen, ((0,60,0)), button_rect)
 
-            # Renderizza il titolo su più righe, se necessario
-            y_offset_title = rect.y + 10  # Posizione iniziale per il titolo
-            for line in title_lines:
-                title_rendered = self.title_font.render(line, True, (255, 255, 255))
-                self.screen.blit(title_rendered, (rect.x + 10, y_offset_title))
-                y_offset_title += 30  # Aggiungi uno spazio dopo ogni riga del titolo
-
-            # Description
-            wrapped_text = textwrap.wrap(content['description'], width=20)  # Adjust width for wrapping
-            y_offset = 90
-            for line in wrapped_text:
-                desc_text = self.desc_font.render(line, True, (255, 255, 255))
-                self.screen.blit(desc_text, (rect.x + 10, rect.y + y_offset))
-                y_offset += 30
-
-            # CTA Button
-            button_width, button_height = 100, 40
-            button_x = rect.x + (rect.width - button_width) // 2
-            button_y = rect.y + rect.height - button_height - 10
-
-            button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
-            pygame.draw.rect(self.screen, ((0,255,0)), button_rect)
-
-            # Button text
-            button_text = self.cta_font.render("Play", True, ((255,255,255)))
-            self.screen.blit(button_text, (button_x + (button_width - button_text.get_width()) // 2, button_y + (button_height - button_text.get_height()) // 2))
+            # testo CTA
+            button_text = self.cta_font.render("Play", True, ((255,255,255))) # crea testo bottone
+            self.screen.blit(button_text, (button_rect.x + (button_rect.width - button_text.get_width()) // 2, button_rect.y + (button_rect.height - button_text.get_height()) // 2))
 
         pygame.display.flip()
 
-    def draw_extra(self, title, CTA):
-        """Disegno schermate intro e outro, fornendo titolo e CTA bottone"""
-
-        self.screen.fill((0, 0, 0))
-        text = self.title_font.render(title, True, (255, 255, 255))
-        self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 3))
+    def _wrapper(self, text, width, y_offset, font, x_pos, y_pos=0):
         
-        submit_button = self.get_submit_button_rect()["GameOver"]
-        pygame.draw.rect(self.screen, (0, 255, 0), submit_button)
-        button_text = self.cta_font.render(CTA, True, (255, 255, 255))
-        self.screen.blit(button_text, (submit_button.x + (submit_button.width - button_text.get_width()) // 2, submit_button.y-5))
-    
+        # textwrap chiude il testo in un box
+        wrapped_text = textwrap.wrap(text, width)  
+        for line in wrapped_text:
+            text_rendered = font.render(line, True, (255, 255, 255))
+            self.screen.blit(text_rendered, (x_pos + 10, y_pos + y_offset))
+            y_offset += 30  # Aggiunge uno spazio dopo ogni riga
+
     def draw_board(self):
         """Disegno scacchiera"""
 

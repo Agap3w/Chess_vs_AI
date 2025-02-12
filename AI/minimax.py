@@ -1,5 +1,4 @@
 import chess
-from typing import Optional, Tuple
 import random
 
 def minimax_best_move(board, board_score, depth=3):
