@@ -1,20 +1,16 @@
 """ TO DO: """
-# cerco di capire come importare i dati in un formato X(n,8,8) Y(n,3)
 # mi informo su quale NN posso trainare i dati (parto da un pretrainato? pro & cons?)
-
+# inizio a trainare i dati
 
 """ MINOR: """
-# draw game state lo posso spostare in GUI scorporando la logica promo?
-# evidenzio checkmate (creo draw_checkmate?)
+# evidenzio checkmate (creo draw_checkmate? highlight rosso su re e attacker?)
 # colonna A1 non si seleziona
-# AI minimax non evita la patta per ripetizione se è in vantaggio
-# vedo se posso evitare alcune fz già presenti in chess (tipo is_gameover?)
 # sul retry AI muove bianco e si scazza tutto
+# AI minimax non evita la patta per ripetizione se è in vantaggio
 # faccio redraw solo sulle square in cui serve (evitando di appesantire le performance ridisegnando ogni volta tutto)
 
 """ VERY MINOR: """
 # suoni mangio AI non sempre a fuoco
-# miglioro grafica intro
 # scelgo bianco o nero
 # aggiungere pulsante per arrendersi / chiedere la patta (con AI che accetta se suo score >0)
 # customizzo grafica pezzi
@@ -186,8 +182,7 @@ class ChessGame:
         if self.game_logic.awaiting_promotion:
             promotion_square = self.game_logic.get_promotion_square()
             if promotion_square is not None:
-                self.gui.draw_promotion_menu(promotion_square, 
-                                          self.game_logic.board.turn)
+                self.gui.draw_promotion_menu(promotion_square, self.game_logic.board.turn)
 
 class GameLogic:
     """Classe dedicata alle regole del gioco (come si muovono i pezzi, etc.) e meccaniche speciali (es. promozione del pedone)"""
