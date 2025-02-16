@@ -28,9 +28,12 @@
 import textwrap
 import pygame
 import chess
+import AI.basic_test
 from AI.heuristic import heuristic_best_move
 from AI.minimax import minimax_best_move
+import AI.basic_test
 from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE, PIECE_VALUES, PIECE_POS_TABLE, INTRO, OUTRO
+
 
 class ChessGame:
     """main Class che unisce tutte le altre 4 subclass"""
@@ -87,6 +90,8 @@ class ChessGame:
                 ai_move = heuristic_best_move(self.game_logic.board, self.board_score)
             elif self.opponent == 2:
                 ai_move = minimax_best_move(self.game_logic.board, self.board_score)
+            elif self.opponent == 3:
+                ai_move = AI.basic_test.test_model(self.game_logic.board)
             
             # Se esiste una AI best move, eseguo mossa + suono
             if ai_move:
@@ -119,6 +124,11 @@ class ChessGame:
         
             if self.gui.get_submit_button_rect()["Minimax"].collidepoint(pos):
                 self.opponent = 2
+                self.game_state = "playing"
+                self.gui.redraw_needed = True
+
+            if self.gui.get_submit_button_rect()["CNN"].collidepoint(pos):
+                self.opponent = 3
                 self.game_state = "playing"
                 self.gui.redraw_needed = True
 
@@ -484,13 +494,13 @@ class GUI:
                 button_width,
                 button_height+10
             ),
-            "Reinforc. Learning": pygame.Rect(
+            "CNN": pygame.Rect(
                 (2 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # Third rectangle
                 HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,
                 button_width,
                 button_height+10
             ),
-            "Neural Network": pygame.Rect(
+            "Reinforce": pygame.Rect(
                 (3 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # Fourth rectangle
                 HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,
                 button_width,
