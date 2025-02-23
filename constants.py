@@ -96,9 +96,9 @@ PIECE_POS_TABLE = {
 
 
 INTRO = [
-    {"title": "Heuristic", "description": "Questo algoritmo rudimentale nasce negli anni '40. Pensa solo al proprio turno, valutando tutte le opzioni possibili e scegliendo la mossa che gli porta il vantaggio immediato maggiore.\nE' Molto veloce a rispondere.\nDifficoltà: Facile", "cta_text": "Sfida Heuristic AI"},
-    {"title": "Minimax", "description": "Avanziamo negli anni '50. Questo algoritmo analizza fino a tre turni futuri, anticipando le mosse dell'avversario. Leggero aumento del tempo di reazione.\nDifficoltà: Media", "cta_text": "Click 2"},
-    {"title": "CNN", "description": "anni 90: questo modello si basa su un supervised learning attraverso reti neruali CNN, è stato trainato su 1 milione di partite di giocatori con ELO 1800-2300 e ha 'imparato' a giocare come loro!\n Difficoltà: Media ", "cta_text": "Click 3"},
+    {"title": "Heuristic", "description": "Questo algoritmo rudimentale nasce negli anni '40. Pensa solo al proprio turno, valutando tutte le opzioni possibili e scegliendo la mossa che gli porta il vantaggio immediato maggiore.\nE' Molto veloce a rispondere.\nDifficoltà: Media", "cta_text": "Sfida Heuristic AI"},
+    {"title": "Minimax", "description": "Avanziamo negli anni '50. Questo algoritmo analizza fino a tre turni futuri, anticipando le mosse dell'avversario. Leggero aumento del tempo di reazione.\nDifficoltà: Difficile", "cta_text": "Click 2"},
+    {"title": "CNN", "description": "anni 90: questo modello si basa su un supervised learning attraverso reti neruali CNN, è stato trainato su milioni di partite di giocatori con ELO 1800-2300 e ha 'imparato' a giocare come loro!\n Difficoltà: Media ", "cta_text": "Click 3"},
     {"title": "Reinforce", "description": "Description 4", "cta_text": "Click 4"},
 ]
 

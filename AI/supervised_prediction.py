@@ -2,17 +2,17 @@ import tensorflow as tf
 import numpy as np
 import chess
 import chess.pgn
-from AI.supervised import EnhancedChessCNN
+from AI.resources.supervised_CNN_train import EnhancedChessCNN
 
 
-# Constants matching your training setup
+# Costanti (input, output, trained model)
 BOARD_SHAPE = (8, 8, 15)
 MOVE_VECTOR_SIZE = 4096
 model_path = r"C:\Users\Matte\main_matte_py\Chess_vs_AI\AI\resources\supervised_model.h5"
 
 def board_to_efficient_matrix(board: chess.Board) -> np.ndarray:
     """
-    Convert a chess board to an efficient 8x8x15 one-hot matrix representation.
+    Convert a chess board into an efficient 8x8x15 one-hot matrix representation (input format of trained model).
     
     Channels:
     0-5: White pieces (P, N, B, R, Q, K)
@@ -39,17 +39,15 @@ def board_to_efficient_matrix(board: chess.Board) -> np.ndarray:
             matrix[rank, file, plane] = 1.0
     
     # Fill castling rights (channels 12-13)
-    # Channel 12: Kingside castling rights
     if board.turn:  # White's turn
         has_kingside = bool(board.castling_rights & chess.BB_H1)
     else:  # Black's turn
         has_kingside = bool(board.castling_rights & chess.BB_H8)
     matrix[:, :, 12] = has_kingside
 
-    # Channel 13: Queenside castling rights
-    if board.turn:  # White's turn
+    if board.turn:  
         has_queenside = bool(board.castling_rights & chess.BB_A1)
-    else:  # Black's turn
+    else:  
         has_queenside = bool(board.castling_rights & chess.BB_A8)
     matrix[:, :, 13] = has_queenside
     
@@ -161,31 +159,6 @@ class ChessMovePredictor:
                 print(f"Promotion detected: {best_move.uci()}")
         
         return best_move
-
-def demonstrate_predictor(model_path, fen=None):
-    """Demonstrate the predictor with a sample position"""
-    # Initialize the predictor
-    predictor = ChessMovePredictor(model_path)
-    
-    # Set up a board
-    board = chess.Board(fen) if fen else chess.Board()
-    
-    print("\nCurrent board position:")
-    print(board)
-    print(f"\nFEN: {board.fen()}")
-    print(f"Turn: {'White' if board.turn == chess.WHITE else 'Black'}")
-    
-    # Predict the best move
-    best_move = predictor.predict_move(board)
-    
-    print(f"\nBest move: {best_move.uci()}")
-    
-    # Make the move on the board
-    board.push(best_move)
-    
-    print("\nBoard after move:")
-    print(board)
-    return board
 
 def supervised_move(board: chess.Board, predictor, turn: bool = chess.BLACK) -> chess.Move:
     """

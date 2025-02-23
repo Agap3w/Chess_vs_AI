@@ -1,6 +1,6 @@
 """ TO DO: """
-# mi informo su quale NN posso trainare i dati (parto da un pretrainato? pro & cons?)
-# inizio a trainare i dati
+# sistemo prediction e supervised (pulisco, commento)
+# inizio a teorizzare il reinforcement learning
 
 """ MINOR: """
 # evidenzio checkmate (creo draw_checkmate? highlight rosso su re e attacker?)
@@ -16,9 +16,6 @@
 # customizzo grafica pezzi
 # Segnalo Mossa Irregolare: suono, highlight rosso, mostro possibili legal moves? 
 
-""" NEXT TO DO: """
-# come quarto importo Stockfish per showcase API management o mi lancio in un NN supervised learning?
-
 """ DOUBT: """
 # sql
 # documentation? (es spiegazione lunga funzioni)
@@ -30,7 +27,7 @@ import pygame
 import chess
 from AI.heuristic import heuristic_best_move
 from AI.minimax import minimax_best_move
-import AI.prediction
+import AI.supervised_prediction
 from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE, PIECE_VALUES, PIECE_POS_TABLE, INTRO, OUTRO
 
 
@@ -44,8 +41,8 @@ class ChessGame:
         self.game_logic = GameLogic()
         self.board_score = BoardScore(self.game_logic.board)
 
-        # predictor per supervised model (dovrei spostarlo solo su if ai=3)
-        self.predictor = AI.prediction.ChessMovePredictor()
+        # predictor per supervised model
+        self.predictor = None
 
         # inizializzo alcuni parametri che userò nel main loop
         self.running = True
@@ -93,7 +90,9 @@ class ChessGame:
             elif self.opponent == 2:
                 ai_move = minimax_best_move(self.game_logic.board, self.board_score)
             elif self.opponent == 3:
-                ai_move = AI.prediction.supervised_move(self.game_logic.board, self.predictor)
+                if self.predictor is None:
+                    self.predictor = AI.supervised_prediction.ChessMovePredictor()
+                ai_move = AI.supervised_prediction.supervised_move(self.game_logic.board, self.predictor)
             
             # Se esiste una AI best move, eseguo mossa + suono
             if ai_move:

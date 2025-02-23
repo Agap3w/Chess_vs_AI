@@ -1,8 +1,19 @@
+# import + GPU settings
 import tensorflow as tf
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        logical_gpus = tf.config.list_logical_devices('GPU')
+        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    except RuntimeError as e:
+        print(e)
 from tensorflow.keras import layers, Model
 import datetime
 import glob
 import os
+
 
 def create_legal_moves_mask_loss():
     """Custom loss function that only considers legal moves."""
@@ -26,49 +37,73 @@ class EnhancedChessCNN(Model):
         super(EnhancedChessCNN, self).__init__()
         
         # Expanded initial features with larger kernel
-        self.conv1 = layers.Conv2D(256, 5, padding='same')
+        self.conv1 = layers.Conv2D(192, 5, padding='same')
         self.bn1 = layers.BatchNormalization()
         
         # Feature extraction blocks with different kernel sizes
         self.local_features = [
-            layers.Conv2D(128, 3, padding='same'),
+            layers.Conv2D(96, 3, padding='same'),
             layers.BatchNormalization(),
             layers.ReLU()
         ]
         
         self.global_features = [
-            layers.Conv2D(128, 5, padding='same'),
+            layers.Conv2D(96, 5, padding='same'),
             layers.BatchNormalization(),
             layers.ReLU()
         ]
         
+        # Attention block layers
+        self.attn_q = layers.Conv2D(192 // 8, 1)  # Assuming 192 channels
+        self.attn_k = layers.Conv2D(192 // 8, 1)
+        self.attn_v = layers.Conv2D(192, 1)
+
         # Residual blocks with increased capacity
         self.res_blocks = []
         for _ in range(12):  # Increased from 6
             self.res_blocks.append([
-                layers.Conv2D(256, 3, padding='same'),
+                layers.Conv2D(192, 3, padding='same'),
                 layers.BatchNormalization(),
                 layers.ReLU(),
                 layers.Dropout(0.1),  # Reduced dropout
-                layers.Conv2D(256, 3, padding='same'),
+                layers.Conv2D(192, 3, padding='same'),
                 layers.BatchNormalization(),
                 layers.Dropout(0.1)
-            ])
+            ])  
         
         # Enhanced policy head
-        self.policy_conv1 = layers.Conv2D(256, 3, padding='same')
+        self.policy_conv1 = layers.Conv2D(192, 3, padding='same')
         self.policy_bn1 = layers.BatchNormalization()
         
-        self.policy_conv2 = layers.Conv2D(128, 3, padding='same')
+        self.policy_conv2 = layers.Conv2D(96, 1, padding='same')
         self.policy_bn2 = layers.BatchNormalization()
         
         self.policy_flat = layers.Flatten()
-        self.policy_dense1 = layers.Dense(4096, activation='relu')
-        self.policy_dropout1 = layers.Dropout(0.2)
-        self.policy_dense2 = layers.Dense(2048, activation='relu')
-        self.policy_dropout2 = layers.Dropout(0.2)
-        self.policy_dense3 = layers.Dense(4096)
-        
+        self.policy_dense1 = layers.Dense(1536, activation='relu')
+        self.policy_dropout = layers.Dropout(0.15)
+        self.policy_dense2 = layers.Dense(4096)
+    
+    def attention_block(self, x, channels):
+        q = self.attn_q(x)
+        k = self.attn_k(x)
+        v = self.attn_v(x)
+
+        batch_size = tf.shape(x)[0]
+        q = tf.reshape(q, [batch_size, -1, channels // 8])
+        k = tf.reshape(k, [batch_size, -1, channels // 8])
+        v = tf.reshape(v, [batch_size, -1, channels])
+
+        q_dtype = q.dtype
+        s = tf.matmul(q, k, transpose_b=True)
+        # Cast the scalar to the input's dtype instead of hardcoding float32
+        scale = tf.cast(tf.sqrt(tf.cast(channels // 8, tf.float32)), q_dtype)
+        s = s / scale
+        s = tf.nn.softmax(s)
+
+        out = tf.matmul(s, v)
+        out = tf.reshape(out, [batch_size, 8, 8, channels])
+        return layers.add([x, out])
+    
     def call(self, inputs, training=False):
         x = inputs
         
@@ -98,6 +133,8 @@ class EnhancedChessCNN(Model):
         # Combine features
         x = tf.concat([local_x, global_x], axis=-1)
         
+        x = self.attention_block(x, 192)  # Assuming 192 channels after concatenation
+
         # Enhanced residual blocks
         for block in self.res_blocks:
             residual = x
@@ -122,12 +159,14 @@ class EnhancedChessCNN(Model):
         
         x = self.policy_flat(x)
         x = self.policy_dense1(x)
-        x = self.policy_dropout1(x, training=training)
+        x = self.policy_dropout(x, training=training)
         x = self.policy_dense2(x)
-        x = self.policy_dropout2(x, training=training)
-        x = self.policy_dense3(x)
         
-        return tf.nn.softmax(x)
+        # Cast the final output back to float32 for numerical stability in loss calculation
+        x = tf.nn.softmax(x)
+        x = tf.cast(x, tf.float32)
+        
+        return x
 
 def parse_tfrecord(example):
     """Parse TFRecord example with validation."""
@@ -173,30 +212,30 @@ def prepare_dataset(tfrecord_files, batch_size):
 
 @tf.function
 def train_step(model, optimizer, loss_fn, x, y_true, legal_moves_mask):
-    """Single training step with improved error checking."""
+    """Single training step without mixed precision."""
 
     # Training step
     with tf.GradientTape() as tape:
         y_pred = model(x, training=True)
         loss = loss_fn(y_true, y_pred, legal_moves_mask)
-    
+
+    # Calculate gradients
     gradients = tape.gradient(loss, model.trainable_variables)
 
     # Add gradient value checking
     grad_norms = [tf.norm(g) for g in gradients if g is not None]
-
-    # Use tf.reduce_any to check for NaN values
     is_nan_detected = tf.reduce_any(tf.math.is_nan(grad_norms))
 
     if is_nan_detected:
         tf.print("WARNING: NaN gradients detected")
         return loss
 
+    # Apply gradients
     optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-    
+
     return loss
 
-def train_model(model, train_dataset, val_dataset, optimizer, loss_fn, epochs, steps_per_epoch, validation_steps, checkpoint_dir, log_dir):
+def train_model(model, train_dataset, val_dataset, optimizer, loss_fn, epochs, steps_per_epoch, validation_steps, checkpoint_dir, log_dir, lr_schedule):
     # Additional metrics
     train_legal_move_accuracy = tf.keras.metrics.Mean()
     val_legal_move_accuracy = tf.keras.metrics.Mean()
@@ -214,7 +253,7 @@ def train_model(model, train_dataset, val_dataset, optimizer, loss_fn, epochs, s
     
     # Early stopping setup
     best_val_accuracy = 0
-    patience = 5
+    patience = 6
     patience_counter = 0
     
     for epoch in range(epochs):
@@ -265,7 +304,7 @@ def train_model(model, train_dataset, val_dataset, optimizer, loss_fn, epochs, s
                 tf.cast(tf.equal(tf.argmax(legal_move_pred, axis=1), y_indices), tf.float32)
             )
             val_legal_move_accuracy.update_state(legal_move_accuracy)
-        
+
         # Enhanced logging
         with writer.as_default():
             # Existing metrics
@@ -279,7 +318,7 @@ def train_model(model, train_dataset, val_dataset, optimizer, loss_fn, epochs, s
             # New metrics
             tf.summary.scalar('train/legal_move_accuracy', train_legal_move_accuracy.result(), step=epoch)
             tf.summary.scalar('validation/legal_move_accuracy', val_legal_move_accuracy.result(), step=epoch)
-            tf.summary.scalar('learning_rate', optimizer._decayed_lr('float32'), step=epoch)
+            tf.summary.scalar('learning_rate', lr_schedule(epoch * steps_per_epoch), step=epoch)
         
         # Early stopping check
         current_val_accuracy = val_accuracy.result()
@@ -296,13 +335,12 @@ def train_model(model, train_dataset, val_dataset, optimizer, loss_fn, epochs, s
 
 def main():
     # Configuration
-    DATASET_SIZE =  10000000
-    BATCH_SIZE = 256
-    EPOCHS = 50
+    DATASET_SIZE =  20000000
+    BATCH_SIZE = 1024
+    EPOCHS = 20
     STEPS_PER_EPOCH = int(DATASET_SIZE / BATCH_SIZE)
     VALIDATION_STEPS = int((DATASET_SIZE*0.1) / BATCH_SIZE)
 
-    
     # Paths
     tfrecord_dir = r"C:\Users\Matte\Desktop\temp_chess\e2e4\Train_Dataset\Large"  # Directory containing TFRecord files
     checkpoint_dir = "checkpoints"  # Directory to save model checkpoints
@@ -329,33 +367,23 @@ def main():
     dummy_input = tf.random.normal((1, 8, 8, 15))
     _ = model(dummy_input)
     model.summary()
-    
-    # Learning rate schedule
-    initial_learning_rate = 0.001
-    lr_schedule = tf.keras.optimizers.schedules.CosineDecayRestarts(
-        initial_learning_rate,
-        first_decay_steps=STEPS_PER_EPOCH*5,
-        t_mul=2.0,
-        m_mul=0.9,
-        alpha=0.1
+
+    # Learning rate schedule (Warmup + Cosine Decay)
+    warmup_steps = STEPS_PER_EPOCH  # Warmup for one epoch
+    total_steps = STEPS_PER_EPOCH * EPOCHS
+
+    lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
+        initial_learning_rate=0.001, 
+        decay_steps=total_steps - warmup_steps
     )
-    
-    # Create optimizer and loss function
-    # Updated optimizer
+
+    # Create optimizer
     optimizer = tf.keras.optimizers.Adam(
         learning_rate=lr_schedule,
         clipnorm=1.0
     )
+
     loss_fn = create_legal_moves_mask_loss()
-    
-    # Configure GPU memory growth
-    gpus = tf.config.list_physical_devices('GPU')
-    if gpus:
-        try:
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-        except RuntimeError as e:
-            print(e)
     
     # Train model
     try:
@@ -369,7 +397,9 @@ def main():
             steps_per_epoch=STEPS_PER_EPOCH,
             validation_steps=VALIDATION_STEPS,
             checkpoint_dir=checkpoint_dir,
-            log_dir=log_dir
+            log_dir=log_dir,
+            lr_schedule=lr_schedule
+
         )
         print("Training completed successfully!")
         
