@@ -1,3 +1,7 @@
 # ignore large dataset
 AI/data/
 AI/resources/chess_model
+
+# ignore cache and bytecode
+__pycache__/
+*.pyc
