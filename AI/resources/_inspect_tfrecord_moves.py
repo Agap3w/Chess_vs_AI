@@ -1,70 +1,60 @@
 import tensorflow as tf
-import logging
-import glob
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import numpy as np  # Import numpy at the top level
 
 def parse_tfrecord(example):
+    """Parse a single TFRecord example."""
     feature = {
-        'x': tf.io.FixedLenFeature([], tf.string),
-        'y': tf.io.FixedLenFeature([], tf.string),
-        'num_legal_moves': tf.io.FixedLenFeature([], tf.string),  # Add this line
+        'x': tf.io.FixedLenFeature([], tf.string),  # Corrected: shape=[]
+        'y': tf.io.FixedLenFeature([], tf.string),  # Corrected: shape=[]
+        'legal_moves_mask': tf.io.FixedLenFeature([], tf.string),  # Corrected: shape=[]
     }
     example = tf.io.parse_single_example(example, feature)
+
     x = tf.io.decode_raw(example['x'], tf.int8)
-    y = tf.io.decode_raw(example['y'], tf.int16)
-    num_legal_moves = tf.io.decode_raw(example['num_legal_moves'], tf.int16)  # Add this line
+    y = tf.io.decode_raw(example['y'], tf.int8)
+    legal_moves_mask = tf.io.decode_raw(example['legal_moves_mask'], tf.int8)
 
-    x = tf.reshape(x, (8, 8, 12))
-    y = tf.reshape(y, (1,))
-    num_legal_moves = tf.reshape(num_legal_moves, (1,))  # Add this line
+    x = tf.reshape(x, (8, 8, 15))  # Replace with your x shape if different
+    y = tf.reshape(y, (4096,))       # Replace with your y shape if different
+    legal_moves_mask = tf.reshape(legal_moves_mask, (4096,)) # Replace with your mask shape if different
 
-    return x, y, num_legal_moves  # Return num_legal_moves
+    return x, y, legal_moves_mask
 
-def inspect_tfrecord(tfrecord_path, num_examples=2):
-    dataset = tf.data.TFRecordDataset([tfrecord_path], compression_type="GZIP")
-    dataset = dataset.map(parse_tfrecord)
 
-    num_examples_checked = 0
-    num_errors = 0  # Keep track of errors
+def print_example(tfrecord_file):
+    """Parses and prints a single example from a TFRecord file."""
+    try:
+        dataset = tf.data.TFRecordDataset([tfrecord_file], compression_type="GZIP") # Add compression type if needed
+        for example in dataset.take(1):  # Take only one example
+            x, y, legal_moves_mask = parse_tfrecord(example)
 
-    for i, (x, y, num_legal_moves) in enumerate(dataset):
-        num_examples_checked += 1
+            np.set_printoptions(threshold=np.inf)  # Print the entire array, no truncation
 
-        # NaN/Inf checks (as before):
-        x_float = tf.cast(x, tf.float32)
-        try: # Try block to catch the exception and count it instead of stopping the execution
-            tf.debugging.check_numerics(x_float, "NaN/Inf in x detected!")
-            tf.debugging.check_numerics(tf.cast(y, tf.float32), "NaN/Inf in y detected!")
-            tf.debugging.check_numerics(tf.cast(num_legal_moves, tf.float32), "NaN/Inf in num_legal_moves detected!")
-        except tf.errors.InvalidArgumentError as e:
-            logging.error(f"NaN/Inf error in example: {i}, Error: {e}")
-            num_errors += 1
 
-        max_legal_moves = 218
-        is_y_in_range = tf.reduce_all(tf.logical_and(y >= 0, y < num_legal_moves))
-        try:
-            tf.debugging.assert_equal(is_y_in_range, True, message=f"y is out of range! y: {y.numpy()}, num_legal_moves: {num_legal_moves.numpy()}, Example: {i}")
-        except AssertionError as e:
-            logging.error(e)
-            num_errors += 1
+            print("Shape of x:", x.shape)
+            print("Shape of y:", y.shape)
+            print("Shape of legal_moves_mask:", legal_moves_mask.shape)
 
-        is_num_legal_moves_valid = tf.less_equal(num_legal_moves, max_legal_moves)
-        try:
-            tf.debugging.assert_equal(is_num_legal_moves_valid, True, message=f"num_legal_moves is too large! num_legal_moves: {num_legal_moves.numpy()}, Example: {i}")
-        except AssertionError as e:
-            logging.error(e)
-            num_errors += 1
+            print("\nExample x:")
+            print(x.numpy())  # Convert to NumPy for printing
 
-        if i % 1000 == 0:  # Log every 1000 examples (adjust as needed)
-            logging.info(f"Checked {i} examples in {tfrecord_path}. Errors found: {num_errors}")
+            print("\nExample y:")
+            print(y.numpy())
 
-    logging.info(f"Finished checking {num_examples_checked} examples in {tfrecord_path}. Total errors found: {num_errors}")
+            print("\nExample legal_moves_mask:")
+            print(legal_moves_mask.numpy())
 
+            # Print some statistics (optional):
+            print("\nLegal Moves Mask Stats:")
+            print("Number of legal moves:", np.sum(legal_moves_mask.numpy()))
+            print("Min Value:", np.min(legal_moves_mask.numpy()))
+            print("Max Value:", np.max(legal_moves_mask.numpy()))
+
+            return  # Exit after printing one example
+
+    except Exception as e:
+        print(f"Error processing TFRecord file: {e}")
 
 if __name__ == "__main__":
-    tfrecord_files = glob.glob(r"C:\Users\Matte\Desktop\temp chess\Train_Dataset\Small Shard\Train_Dataset_shard_000.tfrecord.gz")
-
-    for tfrecord_file in tfrecord_files:
-        logging.info(f"Inspecting TFRecord file: {tfrecord_file}")
-        inspect_tfrecord(tfrecord_file)
+    tfrecord_file = r"C:\Users\Matte\Desktop\temp_chess\e2e4\Train_Dataset\Medium\medium_e2e4_shard_000.tfrecord.gz"  # Replace with your TFRecord file path
+    print_example(tfrecord_file)

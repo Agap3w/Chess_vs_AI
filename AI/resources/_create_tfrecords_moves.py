@@ -6,26 +6,35 @@ import chess
 import chess.pgn    
 import numpy as np
 import multiprocessing as mp
-import io
 import tensorflow as tf
 from typing import Tuple, List
-import logging
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-BOARD_SHAPE = (8, 8, 12)  # Define the constant board shape globally
+BOARD_SHAPE = (8, 8, 15)  # Define the constant board shape globally
+MOVE_VECTOR_SIZE = 4096
 
 def board_to_efficient_matrix(board: chess.Board) -> np.ndarray:
-    """Convert a chess board to an efficient 8x8x12 one-hot matrix representation."""
-    # 12 planes: 6 piece types × 2 colors
-    matrix = np.zeros((8, 8, 12), dtype=np.int8)
+    """
+    Convert a chess board to an efficient 8x8x15 one-hot matrix representation.
+    
+    Channels:
+    0-5: White pieces (P, N, B, R, Q, K)
+    6-11: Black pieces (p, n, b, r, q, k)
+    12: Kingside castling rights (0: no rights, 1: has rights)
+    13: Queenside castling rights (0: no rights, 1: has rights)
+    14: Turn (0: white to move, 1: black to move)
+    """
+    # Initialize 8x8x15 matrix
+    matrix = np.zeros((8, 8, 15), dtype=np.int8)
     
     piece_to_plane = {
         'P': 0, 'N': 1, 'B': 2, 'R': 3, 'Q': 4, 'K': 5,  # White pieces
         'p': 6, 'n': 7, 'b': 8, 'r': 9, 'q': 10, 'k': 11  # Black pieces
     }
     
+    # Fill piece positions (channels 0-11)
     for square in chess.SQUARES:
         piece = board.piece_at(square)
         if piece:
@@ -34,7 +43,45 @@ def board_to_efficient_matrix(board: chess.Board) -> np.ndarray:
             plane = piece_to_plane[piece.symbol()]
             matrix[rank, file, plane] = 1
     
+    # Fill castling rights (channels 12-13)
+    # Channel 12: Kingside castling rights
+    if board.turn:  # White's turn
+        has_kingside = bool(board.castling_rights & chess.BB_H1)
+    else:  # Black's turn
+        has_kingside = bool(board.castling_rights & chess.BB_H8)
+    matrix[:, :, 12] = has_kingside
+
+    # Channel 13: Queenside castling rights
+    if board.turn:  # White's turn
+        has_queenside = bool(board.castling_rights & chess.BB_A1)
+    else:  # Black's turn
+        has_queenside = bool(board.castling_rights & chess.BB_A8)
+    matrix[:, :, 13] = has_queenside
+    
+    # Fill turn (channel 14)
+    matrix[:, :, 14] = int(not board.turn)  # 0 for white, 1 for black
+    
     return matrix
+
+def parse_tfrecord(example):
+    """
+    Parse TFRecord example with updated board shape.
+    """
+    feature = {
+        'x': tf.io.FixedLenFeature([], tf.string),
+        'y': tf.io.FixedLenFeature([], tf.string),
+        'legal_moves_mask': tf.io.FixedLenFeature([], tf.string),
+    }
+    example = tf.io.parse_single_example(example, feature)
+    x = tf.io.decode_raw(example['x'], tf.int8)
+    y = tf.io.decode_raw(example['y'], tf.int8)
+    legal_moves_mask = tf.io.decode_raw(example['legal_moves_mask'], tf.int8)
+
+    x = tf.reshape(x, BOARD_SHAPE)  # Using updated shape
+    y = tf.reshape(y, (MOVE_VECTOR_SIZE,))
+    legal_moves_mask = tf.reshape(legal_moves_mask, (MOVE_VECTOR_SIZE,))
+
+    return x, y, legal_moves_mask
 
 def move_to_one_hot(move: chess.Move) -> np.ndarray:
     """Convert a chess move to a one-hot vector representation."""
@@ -46,25 +93,31 @@ def move_to_one_hot(move: chess.Move) -> np.ndarray:
     one_hot[from_sq * 64 + to_sq] = 1
     return one_hot
 
-def game_to_xy_pairs(game: chess.pgn.Game) -> List[Tuple[np.ndarray, np.ndarray, int]]: #Added int
-    """Convert game to (X, Y, num_legal_moves) triples."""
+def game_to_xy_pairs(game: chess.pgn.Game) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray]]:  # Correct type hint
+    """Convert game to (X, best_move_vector, legal_moves_mask) triples."""
     result = game.headers.get("Result", "*")
-    triples = [] #Changed to triples
+    triples = []
     moves = list(game.mainline_moves())
+    board = chess.Board()
 
     try:
         if result == "1-0":  # White wins
-            board = chess.Board()
             for i in range(0, len(moves), 2):
                 x = board_to_efficient_matrix(board)
                 if i < len(moves):
                     move = moves[i]
                     if move in board.legal_moves:
                         legal_moves = list(board.legal_moves)
-                        num_legal_moves = len(legal_moves) #Number of legal moves
-                        move_index = legal_moves.index(move)
-                        y = np.array([move_index], dtype=np.int16)
-                        triples.append((x, y, num_legal_moves)) #Append the triple
+                        legal_moves_mask = np.zeros(MOVE_VECTOR_SIZE, dtype=np.int8)  # Initialize legal move mask
+                        for legal_move in legal_moves:
+                            move_index = chess.SQUARES.index(chess.parse_square(legal_move.uci()[:2])) * 64 + chess.SQUARES.index(chess.parse_square(legal_move.uci()[2:4]))
+                            legal_moves_mask[move_index] = 1
+
+                        best_move_index = chess.SQUARES.index(chess.parse_square(move.uci()[:2])) * 64 + chess.SQUARES.index(chess.parse_square(move.uci()[2:4]))
+                        best_move_vector = np.zeros(MOVE_VECTOR_SIZE, dtype=np.int8)
+                        best_move_vector[best_move_index] = 1
+
+                        triples.append((x, best_move_vector, legal_moves_mask))  # Append the triple
                         board.push(move)
 
                         if i + 1 < len(moves):
@@ -74,7 +127,6 @@ def game_to_xy_pairs(game: chess.pgn.Game) -> List[Tuple[np.ndarray, np.ndarray,
                         return []
 
         elif result == "0-1":  # Black wins
-            board = chess.Board()
             for i in range(0, len(moves), 2):
                 if i < len(moves):
                     white_move = moves[i]
@@ -85,19 +137,25 @@ def game_to_xy_pairs(game: chess.pgn.Game) -> List[Tuple[np.ndarray, np.ndarray,
                             x = board_to_efficient_matrix(board)
                             if black_move in board.legal_moves:
                                 legal_moves = list(board.legal_moves)
-                                num_legal_moves = len(legal_moves)  # Number of legal moves
-                                move_index = legal_moves.index(black_move)
-                                y = np.array([move_index], dtype=np.int16)
-                                triples.append((x, y, num_legal_moves))  # Append the triple
+                                legal_moves_mask = np.zeros(MOVE_VECTOR_SIZE, dtype=np.int8)  # Initialize legal move mask
+                                for legal_move in legal_moves:
+                                    move_index = chess.SQUARES.index(chess.parse_square(legal_move.uci()[:2])) * 64 + chess.SQUARES.index(chess.parse_square(legal_move.uci()[2:4]))
+                                    legal_moves_mask[move_index] = 1
+
+                                best_move_index = chess.SQUARES.index(chess.parse_square(black_move.uci()[:2])) * 64 + chess.SQUARES.index(chess.parse_square(black_move.uci()[2:4]))
+                                best_move_vector = np.zeros(MOVE_VECTOR_SIZE, dtype=np.int8)
+                                best_move_vector[best_move_index] = 1
+
+                                triples.append((x, best_move_vector, legal_moves_mask))  # Append the triple
                                 board.push(black_move)
                             else:
-                                logging.warning(f"Illegal move (Black win) in game {game.headers.get('Event', 'Unknown')}: {black_move} in position {board.fen()}") #Fixed the error
+                                logging.warning(f"Illegal move (Black win) in game {game.headers.get('Event', 'Unknown')}: {black_move} in position {board.fen()}")
                                 return []
                     else:
-                        logging.warning(f"Illegal move (White win) in game {game.headers.get('Event', 'Unknown')}: {white_move} in position {board.fen()}") #Fixed the error
+                        logging.warning(f"Illegal move (White win) in game {game.headers.get('Event', 'Unknown')}: {white_move} in position {board.fen()}")
                         return []
 
-        return triples #Return triples
+        return triples
 
     except Exception as e:
         logging.warning(f"Error processing game: {e}")
@@ -137,15 +195,15 @@ def create_tfrecord_writer(output_path: str, shard_index: int) -> tf.io.TFRecord
     options = tf.io.TFRecordOptions(compression_type="GZIP")
     return tf.io.TFRecordWriter(filename, options=options)
 
-def write_triple_to_tfrecord(writer, x, y, num_legal_moves): #Added num_legal_moves
+def write_triple_to_tfrecord(writer, x, best_move_vector, legal_moves_mask):  # Correct arguments
     x_bytes = x.tobytes()
-    y_bytes = y.tobytes()
-    num_legal_moves_bytes = num_legal_moves.tobytes() #Added num_legal_moves
+    best_move_vector_bytes = best_move_vector.tobytes()  # Correct variable name
+    legal_moves_mask_bytes = legal_moves_mask.tobytes()
 
     feature = {
         'x': _bytes_feature(x_bytes),
-        'y': _bytes_feature(y_bytes),
-        'num_legal_moves': _bytes_feature(num_legal_moves_bytes), #Added num_legal_moves
+        'y': _bytes_feature(best_move_vector_bytes),  # Correct variable name
+        'legal_moves_mask': _bytes_feature(legal_moves_mask_bytes),
     }
     example = tf.train.Example(features=tf.train.Features(feature=feature))
     writer.write(example.SerializeToString())
@@ -194,7 +252,7 @@ def split_pgn_into_games(pgn_path: str):
         logging.error(f"An error occurred while decompressing/reading the file: {e}")
         return
 
-def process_pgn_file(pgn_path: str, output_path: str, num_games: int = 1_000_000, shard_size: int = 10000):
+def process_pgn_file(pgn_path: str, output_path: str, max_pairs: int = 1_000_000, shard_size: int = 10000):
     """Process PGN, create TFRecord with optimizations."""
     logging.info(f"Starting processing of {pgn_path}")
     num_cores = mp.cpu_count()
@@ -208,7 +266,7 @@ def process_pgn_file(pgn_path: str, output_path: str, num_games: int = 1_000_000
 
     try:
         for game_text in split_pgn_into_games(pgn_path):
-            if processed_pairs >= num_games:
+            if processed_pairs >= max_pairs:
                 break
             current_chunk.append(game_text)
 
@@ -217,31 +275,47 @@ def process_pgn_file(pgn_path: str, output_path: str, num_games: int = 1_000_000
                 current_chunk = []  # Clear the chunk *before* processing results
 
                 for game_pairs in chunk_results:  # Iterate over the *results* of each game
-                    if processed_pairs >= num_games:
+                    if processed_pairs >= max_pairs:
                         break
-                    
-                    for x, y, num_legal_moves in game_pairs:  #Unpack the triple
+
+                    for x, best_move_vector, legal_moves_mask in game_pairs:  # Correct unpacking
+                        if processed_pairs == 0:  # Print once, after the first pair is created
+                            print("Shape of x:", x.shape)
+                            print("Shape of best_move_vector:", best_move_vector.shape)
+                            print("Shape of legal_moves_mask:", legal_moves_mask.shape)
+                            print("First example x:\n", x)
+                            print("First example best_move_vector:\n", best_move_vector)
+                            print("First example legal_moves_mask:\n", legal_moves_mask)
+
                         if processed_pairs % shard_size == 0 and processed_pairs > 0:
                             writer.close()
                             current_shard += 1
                             writer = create_tfrecord_writer(output_path, current_shard)
 
-                        write_triple_to_tfrecord(writer, x, y, np.array([num_legal_moves], dtype=np.int16)) # Write the triple
+                        write_triple_to_tfrecord(writer, x, best_move_vector, legal_moves_mask)
                         processed_pairs += 1
 
-                        if processed_pairs % 50000 == 0:
+                        if processed_pairs % 100000 == 0:
                             logging.info(f"Processed and stored {processed_pairs} pairs")
 
-                    current_chunk = []
+                current_chunk = []
 
         # Process any remaining games in the last chunk
         if current_chunk:
             chunk_results = pool.map(process_game, current_chunk)
             all_pairs = [pair for game_pairs in chunk_results for pair in game_pairs]
-            for x, y, num_legal_moves in all_pairs:
+            for x, best_move_vector, legal_moves_mask in all_pairs:  # Correct unpacking
+                if processed_pairs == 0:  # Print ONCE, after the first pair is created
+                    print("Shape of x:", x.shape)
+                    print("Shape of best_move_vector:", best_move_vector.shape)
+                    print("Shape of legal_moves_mask:", legal_moves_mask.shape)
+                    print("First example x:\n", x)
+                    print("First example best_move_vector:\n", best_move_vector)
+                    print("First example legal_moves_mask:\n", legal_moves_mask)
+
                 if processed_pairs >= max_pairs:
                     break
-                write_triple_to_tfrecord(writer, x, y, np.array([num_legal_moves], dtype=np.int16))  # Write the (X, Y) pair
+                write_triple_to_tfrecord(writer, x, best_move_vector, legal_moves_mask)  # Correct call
                 processed_pairs += 1
 
         logging.info(f"Successfully processed {processed_pairs} pairs")
@@ -265,25 +339,24 @@ def parse_tfrecord(example):
     feature = {
         'x': tf.io.FixedLenFeature([], tf.string),
         'y': tf.io.FixedLenFeature([], tf.string),
-        'num_legal_moves': tf.io.FixedLenFeature([], tf.string), #Added num_legal_moves
+        'legal_moves_mask': tf.io.FixedLenFeature([], tf.string),
     }
     example = tf.io.parse_single_example(example, feature)
     x = tf.io.decode_raw(example['x'], tf.int8)
-    y = tf.io.decode_raw(example['y'], tf.int16)
-    num_legal_moves = tf.io.decode_raw(example['num_legal_moves'], tf.int16) #Added num_legal_moves
+    y = tf.io.decode_raw(example['y'], tf.int8)  # Decode as int8
+    legal_moves_mask = tf.io.decode_raw(example['legal_moves_mask'], tf.int8)  # Decode as int8
 
+    x = tf.reshape(x, BOARD_SHAPE)
+    y = tf.reshape(y, (MOVE_VECTOR_SIZE,))
+    legal_moves_mask = tf.reshape(legal_moves_mask, (MOVE_VECTOR_SIZE,))
 
-    x = tf.reshape(x, (8, 8, 12))
-    y = tf.reshape(y, (1,)) # Reshape to a scalar or 1-element vector
-    num_legal_moves = tf.reshape(num_legal_moves, (1,)) #Added num_legal_moves
-
-    return x, y, num_legal_moves #Return the triple
+    return x, y, legal_moves_mask
 
 if __name__ == "__main__":
-    pgn_path = r"C:\Users\Matte\Desktop\temp chess\Train_Dataset\MEDIUM - lichess_db_standard_rated_2015-09.pgn.zst" # Your PGN file
-    output_path = r"C:\Users\Matte\Desktop\temp chess\Train_Dataset"  # Output directory for TFRecords
-    max_pairs = 10000000  # Number of pairs to process (optional)
-    shard_size = 100000  # Number of pairs per shard (optional)
+    pgn_path = r"C:\Users\Matte\Desktop\temp_chess\LARGE_lichess_db_standard_rated_2018-06.pgn.zst" # Your PGN file
+    output_path = r"C:\Users\Matte\Desktop\temp_chess\e2e4\Train_Dataset\Large\large_e2e4"  # Output directory for TFRecords
+    max_pairs = 20000000  # Number of pairs to process (optional)
+    shard_size = 200000  # Number of pairs per shard (optional)
 
     process_pgn_file(pgn_path, output_path, max_pairs, shard_size)
     print("TFRecord creation complete!") # Indicate completion

@@ -28,10 +28,9 @@
 import textwrap
 import pygame
 import chess
-import AI.basic_test
 from AI.heuristic import heuristic_best_move
 from AI.minimax import minimax_best_move
-import AI.basic_test
+import AI.prediction
 from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE, PIECE_VALUES, PIECE_POS_TABLE, INTRO, OUTRO
 
 
@@ -44,6 +43,9 @@ class ChessGame:
         self.sound_manager = SoundManager()
         self.game_logic = GameLogic()
         self.board_score = BoardScore(self.game_logic.board)
+
+        # predictor per supervised model (dovrei spostarlo solo su if ai=3)
+        self.predictor = AI.prediction.ChessMovePredictor()
 
         # inizializzo alcuni parametri che userò nel main loop
         self.running = True
@@ -91,7 +93,7 @@ class ChessGame:
             elif self.opponent == 2:
                 ai_move = minimax_best_move(self.game_logic.board, self.board_score)
             elif self.opponent == 3:
-                ai_move = AI.basic_test.test_model(self.game_logic.board)
+                ai_move = AI.prediction.supervised_move(self.game_logic.board, self.predictor)
             
             # Se esiste una AI best move, eseguo mossa + suono
             if ai_move:
