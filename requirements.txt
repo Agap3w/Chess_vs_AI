@@ -1,6 +1,0 @@
-tensorflow==2.15.0
-tensorflow-gpu==2.15.0
-numpy>=1.24.3
-chess==1.10.0
-matplotlib==3.8.0
-pandas==2.1.1

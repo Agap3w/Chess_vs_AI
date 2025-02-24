@@ -1,5 +1,4 @@
 """ TO DO: """
-# sistemo prediction e supervised (pulisco, commento)
 # inizio a teorizzare il reinforcement learning
 
 """ MINOR: """
@@ -8,6 +7,7 @@
 # sul retry AI muove bianco e si scazza tutto
 # AI minimax non evita la patta per ripetizione se è in vantaggio
 # faccio redraw solo sulle square in cui serve (evitando di appesantire le performance ridisegnando ogni volta tutto)
+# giro di teoria e commenti su CNN
 
 """ VERY MINOR: """
 # suoni mangio AI non sempre a fuoco
