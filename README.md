@@ -123,6 +123,8 @@ The script also includes functions for parsing TFRecord datasets, preparing data
 The `main` function orchestrates the entire training process, handling dataset loading, model compilation, and training execution, designed to train a robust chess AI model from a large dataset of chess positions.
 Current model has been trained on 20MM pairs chess position + move, extracted from winning players in 1800-2300 ELO matches.
 
+![Profile Picture](static\tensorboard_supervised_final.png)
+
 ## Future Improvements
 
 - Complete implementation of Reinforcement Learning AI
