@@ -1,0 +1,6 @@
+pygame
+chess
+tensorflow
+numpy
+zstandard
+chardet

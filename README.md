@@ -116,12 +116,12 @@ The supervised learning model can be trained using:
 ```bash
 python AI/resources/supervised_CNN_train.py
 ```
-This Python script implements a sophisticated Convolutional Neural Network (CNN) for chess move prediction, leveraging TensorFlow and Keras. 
+This Python script implements a sophisticated Convolutional Neural Network (CNN) for chess move prediction, leveraging TensorFlow and Keras.
 It begins by configuring GPU settings to optimize performance, followed by the definition of an `EnhancedChessCNN` model. This model incorporates advanced features such as expanded initial convolutional layers, parallel local and global feature extraction, an attention mechanism, and deep residual blocks. 
 A custom loss function, `create_legal_moves_mask_loss`, ensures that the model only considers legal moves during training. 
 The script also includes functions for parsing TFRecord datasets, preparing data pipelines, and a detailed training loop with metrics logging, early stopping, and learning rate scheduling.
 The `main` function orchestrates the entire training process, handling dataset loading, model compilation, and training execution, designed to train a robust chess AI model from a large dataset of chess positions.
-Current model has been trained on 20MM pairs chess position + move, extracted from winning players in 1800-2300 ELO matches.
+\nCurrent model has been trained on 20MM pairs chess position + move, extracted from winning players in 1800-2300 ELO matches.
 
 ![Profile Picture](static/tensorboard_supervised_final.png)
 
