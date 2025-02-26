@@ -2,6 +2,8 @@
 
 A Python-based chess game where you can play against different AI opponents using various algorithms and machine learning approaches.
 
+![Homepage](static/Chess_vs_AI.png)
+
 ## Overview
 
 This application allows users to play chess against four different types of AI opponents:
