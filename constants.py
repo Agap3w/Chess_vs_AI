@@ -96,10 +96,10 @@ PIECE_POS_TABLE = {
 
 
 INTRO = [
-    {"title": "Heuristic", "description": "Questo algoritmo rudimentale nasce negli anni '40. Pensa solo al proprio turno, valutando tutte le opzioni possibili e scegliendo la mossa che gli porta il vantaggio immediato maggiore.\nE' Molto veloce a rispondere.\nDifficoltà: Media", "cta_text": "Sfida Heuristic AI"},
-    {"title": "Minimax", "description": "Avanziamo negli anni '50. Questo algoritmo analizza fino a tre turni futuri, anticipando le mosse dell'avversario. Leggero aumento del tempo di reazione.\nDifficoltà: Difficile", "cta_text": "Click 2"},
-    {"title": "CNN", "description": "anni 90: questo modello si basa su un supervised learning attraverso reti neruali CNN, è stato trainato su milioni di partite di giocatori con ELO 1800-2300 e ha 'imparato' a giocare come loro!\n Difficoltà: Media ", "cta_text": "Click 3"},
-    {"title": "Reinforce", "description": "Description 4", "cta_text": "Click 4"},
+    {"title": "Heuristic", "description": "Questo algoritmo rudimentale nasce negli anni '40. Pensa solo al proprio turno, valutando tutte le opzioni possibili, e scegliendo la mossa che gli porta il vantaggio immediato maggiore.\nE' Molto veloce a rispondere.", "cta_text": "Sfida Heuristic AI"},
+    {"title": "Minimax", "description": "Avanziamo negli anni '50. Questo algoritmo analizza fino a tre turni futuri, anticipando le mosse dell'avversario. Leggero aumento del tempo di reazione, seppur mitigato dalla variante alpha-beta pruning", "cta_text": "Click 2"},
+    {"title": "Super V", "description": "2020 circa, questo modello si basa su un supervised learning attraverso reti neruali CNN, migliorate da residual blocks e attention mechanism; è stato trainato su milioni di partite di veri scacchisti e ha 'imparato' a giocare come loro!", "cta_text": "Click 3"},
+    {"title": "Reinforce", "description": "Una delle tecniche più interessanti del Machine Learning: il Reinforcement Learning, combinato con MCTS in self-play: questa AI ha imparato a giocare sfidando se stessa per milioni di partite! E ora vuole mettersi alla prova sfidando un avversario umano :)", "cta_text": "Click 4"},
 ]
 
 OUTRO = [

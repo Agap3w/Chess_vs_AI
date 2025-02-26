@@ -128,7 +128,7 @@ class ChessGame:
                 self.game_state = "playing"
                 self.gui.redraw_needed = True
 
-            if self.gui.get_submit_button_rect()["CNN"].collidepoint(pos):
+            if self.gui.get_submit_button_rect()["Super V"].collidepoint(pos):
                 self.opponent = 3
                 self.game_state = "playing"
                 self.gui.redraw_needed = True
@@ -495,7 +495,7 @@ class GUI:
                 button_width,
                 button_height+10
             ),
-            "CNN": pygame.Rect(
+            "Super V": pygame.Rect(
                 (2 * rect_width + padding) + (rect_width - 2 * padding - button_width) // 2,  # Third rectangle
                 HEIGHT // 4 + HEIGHT // 1.5 - button_height - 10,
                 button_width,

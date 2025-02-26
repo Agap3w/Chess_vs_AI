@@ -1,5 +1,5 @@
 # snellisco codice
-# CPU bottleneck? GPU @13%
+# CPU bottleneck? GPU @30% // 2/10Gb
 # MCST in C++ con un py wrapper? :Q__
 # il modello non sta imparando? solo draw con value loss a 0 e policy loss altissima
 
@@ -168,7 +168,7 @@ class ReplayBuffer:
 class ChessRL:
     """Main chess reinforcement learning class"""
     
-    def __init__(self, learning_rate=0.001, batch_size=1024):
+    def __init__(self, learning_rate=0.001, batch_size=512):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
         
@@ -252,11 +252,20 @@ class ChessRL:
                 masked_logits[mask == 0] = float('-inf')
                 probs = F.softmax(masked_logits, dim=0)
                 
-                # Add child nodes for all legal moves
-                for move in sim_board.legal_moves:
+                # Get legal moves as a list
+                legal_moves = list(sim_board.legal_moves)
+                # Set a noise weight (epsilon) – adjust as needed
+                epsilon = 0.25
+                # Generate Dirichlet noise for the legal moves
+                noise = np.random.dirichlet(np.ones(len(legal_moves)))
+
+                # Add child nodes with blended priors
+                for i, move in enumerate(legal_moves):
                     move_idx = self.move_to_index(move)
                     if 0 <= move_idx < 1968:
-                        prior = probs[move_idx].item()
+                        network_prior = probs[move_idx].item()
+                        # Blend network prior with Dirichlet noise
+                        prior = network_prior * (1 - epsilon) + noise[i] * epsilon
                         child = MCTSNode(parent=node, move=move, prior=prior)
                         node.add_child(child)
                 
@@ -329,7 +338,8 @@ class ChessRL:
         policy_logits, value_preds = self.network(states)
         
         # Calculate loss
-        policy_loss = F.cross_entropy(policy_logits, policy_targets)
+        log_policy = F.log_softmax(policy_logits, dim=1)
+        policy_loss = F.kl_div(log_policy, policy_targets, reduction='batchmean')
         value_loss = F.mse_loss(value_preds, value_targets)
         total_loss = policy_loss + value_loss
         
@@ -361,16 +371,17 @@ def play_game(agent, temperature_schedule=None):
     # Temperature schedule (higher early for exploration, lower later for better play)
     if temperature_schedule is None:
         temperature_schedule = {
-            0: 1.0,    # First 10 moves: high temperature
-            10: 0.5,   # Moves 11-20: medium temperature
-            20: 0.25,  # Moves 21+: low temperature
+            0: 1.0,    # First 20 moves: high exploration
+            20: 0.8,   # Moves 21-40: still relatively high exploration
+            40: 0.5,   # Moves 41-60: moderate exploration
+            60: 0.25,  # Moves 61+: low temperature for more deterministic play
         }
     
     move_count = 0
     temp_thresholds = sorted(temperature_schedule.keys())
     
     # Play until game over or max moves reached
-    while not board.is_game_over() and move_count < 100:
+    while not board.is_game_over() and move_count < 200:
         # Determine temperature based on move count
         temperature = 0.25  # Default low temperature
         for threshold in reversed(temp_thresholds):
@@ -415,7 +426,7 @@ def play_game(agent, temperature_schedule=None):
     
     return result
 
-def train(num_games=100000, batch_size=1024, save_interval=1000):
+def train(num_games=100000, batch_size=512, save_interval=1000):
     """Train the agent through self-play"""
     agent = ChessRL(batch_size=batch_size)
     
@@ -501,7 +512,7 @@ def play_against_human(model_path):
         else:
             # AI's turn
             print("AI is thinking...")
-            move, _ = agent.select_move_with_mcts(board, num_simulations=100, temperature=0.1)
+            move, _ = agent.select_move_with_mcts(board, num_simulations=300, temperature=0.1)
             print(f"AI plays: {move.uci()}")
             board.push(move)
     
