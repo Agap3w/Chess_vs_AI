@@ -1,3 +1,13 @@
+# analize profiling to identify bottleneck
+# remove bottleneck and reduce training time
+# fix print reporting (progression indicator) --> aggiungo ora, setto solo main recap stat (% draw, avg lenght, policy e value loss) ogni... 100 games? 
+# improve NN if roam for more CPU usage (and not possible to further increase batch size)
+
+# try 1 run 1,000 games?
+# analize results and improve model
+
+# NB: for supervised learning parity i should train approx 100k games (equivalent-ish to 20MM chess position)
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,7 +19,9 @@ from collections import deque
 import time
 import os
 from torch.utils.tensorboard import SummaryWriter
-
+import cProfile
+import pstats  # For analyzing cProfile output
+import io
 
 # Set random seeds for reproducibility (tiene quasi fissi i valori random aiutando a paragonare/debugging diverse run)
 random.seed(42)
@@ -198,7 +210,7 @@ class MonteCarloTreeSearch:
             return max(self.children.items(), 
                        key=lambda child: child[1].q_value() + child[1].u_value())
 
-    def __init__(self, agent, num_simulations=100):
+    def __init__(self, agent, num_simulations=10):
         self.agent = agent
         self.num_simulations = num_simulations
     
@@ -269,7 +281,7 @@ class ChessRL:
         self.optimizer = optim.Adam(self.network.parameters(), lr=learning_rate, weight_decay=1e-4) #weight_decay = L2 regularization
         self.replay_buffer = ReplayBuffer(capacity=50000)
         self.batch_size = batch_size
-        self.mcts = MonteCarloTreeSearch(self, num_simulations=100)
+        self.mcts = MonteCarloTreeSearch(self, num_simulations=10)
         
         self.debug_mode = False # For debugging, setto true se voglio printare tutte le varie info di debugging
     
@@ -413,7 +425,7 @@ class ChessRL:
         self.network.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-def play_game(agent, temperature_schedule=None, max_moves=200):
+def play_game(agent, temperature_schedule=None, max_moves=100):
     """Play a complete self-play game"""
     board = chess.Board()
     game_history = []
@@ -444,11 +456,6 @@ def play_game(agent, temperature_schedule=None, max_moves=200):
         for threshold in sorted(temperature_schedule.keys()):
             if move_count >= threshold:
                 temperature = temperature_schedule[threshold]
-        
-        # Debug info
-        if agent.debug_mode and move_count % 10 == 0:
-            print(f"Move {move_count}: {board.fen()}")
-            print(f"Legal moves: {len(list(board.legal_moves))}")
         
         # Encode current state
         state = agent.encoder.encode_board(board).unsqueeze(0)
@@ -482,11 +489,8 @@ def play_game(agent, temperature_schedule=None, max_moves=200):
         
         # Store state and policy for training
         game_history.append((state, policy_target, None))  # Value filled later
-        
+
         # Make move
-        if agent.debug_mode and move_count % 10 == 0:
-            print(f"Selected move: {move.uci()}")
-        
         try:
             board.push(move)
             move_count += 1
@@ -495,11 +499,9 @@ def play_game(agent, temperature_schedule=None, max_moves=200):
                 print(f"Error making move {move}: {e}")
             break
     
-    # Debug info
-    if agent.debug_mode:
-        print(f"Game ended after {move_count} moves. Result: {board.result()}")
-        print(f"Game over reason: checkmate={board.is_checkmate()}, stalemate={board.is_stalemate()}, "
-              f"insufficient={board.is_insufficient_material()}, fifty={board.is_fifty_moves()}, repetition={board.is_repetition()}")
+    # Print a single summary after the game is done.
+    print(f"Game ended after {move_count} moves. Result: {board.result()}")
+    print(f"Game over reason: checkmate={board.is_checkmate()}, stalemate={board.is_stalemate()}, "f"insufficient={board.is_insufficient_material()}, fifty={board.is_fifty_moves()}, repetition={board.is_repetition()}")
     
     # Determine game result
     if board.is_checkmate():
@@ -524,7 +526,9 @@ def play_game(agent, temperature_schedule=None, max_moves=200):
         
         # Add to replay buffer
         agent.replay_buffer.add(state, policy_target, value_target)
-    
+        if len(agent.replay_buffer) % 100 == 0:
+            print(f"Replay buffer length: {len(agent.replay_buffer)}")
+
     return result, move_count
 
 def train(num_games=10000, batch_size=512, save_interval=1000, debug_interval=100):
@@ -625,6 +629,80 @@ def train(num_games=10000, batch_size=512, save_interval=1000, debug_interval=10
     
     return agent
 
+def profile_train(num_games=10):
+    """
+    Profile the training process using cProfile and generate human-readable reports
+    
+    Args:
+        num_games (int): Number of games to train
+    """
+
+    # Create a profiler
+    profiler = cProfile.Profile()
+    
+    # Run the profiler
+    profiler.enable()
+    try:
+        # Call the training function
+        agent = train(num_games=num_games)
+    finally:
+        profiler.disable()
+    
+    # Create multiple output formats for analysis
+    # 1. Text-based detailed stats
+    print("\n--- Detailed Performance Statistics ---")
+    s = io.StringIO()
+    ps = pstats.Stats(profiler, stream=s)
+    
+    # Sort by total time and print top bottlenecks
+    ps.sort_stats('tottime').print_stats(30)  # Top 30 time-consuming functions
+    
+    # Write detailed stats to a human-readable text file
+    with open('performance_profile_detailed.txt', 'w') as f:
+        ps.print_stats(20)  # Write top 20 to file
+    
+    # 2. Cumulative time view
+    print("\n--- Cumulative Time View ---")
+    ps.sort_stats('cumtime').print_stats(20)
+    
+    # 3. Calls per function view
+    print("\n--- Function Call Frequency ---")
+    ps.sort_stats('calls').print_stats(20)
+    
+    # 4. Generate additional text report with more context
+    with open('performance_profile_summary.txt', 'w') as summary_file:
+        summary_file.write("Performance Profiling Summary\n")
+        summary_file.write("=" * 30 + "\n\n")
+        
+        # Safer way to get function stats
+        total_time = 0
+        top_functions = []
+        
+        # Iterate through stats directly
+        for entry in ps.stats.values():
+            total_time += entry[3]  # Total time
+            top_functions.append((entry[4], entry[3], entry[0]))  # (function name, total time, call count)
+        
+        # Sort and take top 10
+        top_functions.sort(key=lambda x: x[1], reverse=True)
+        top_functions = top_functions[:10]
+        
+        summary_file.write(f"Total Profiling Time: {total_time:.4f} seconds\n\n")
+        
+        summary_file.write("Top 10 Time-Consuming Functions:\n")
+        for func_name, total_time, call_count in top_functions:
+            summary_file.write(f"- {func_name}: {total_time:.4f} sec ({call_count} calls)\n")
+    
+    print("\nProfiling complete. Check performance_profile_detailed.txt and performance_profile_summary.txt")
+    
+    return agent
+
 
 if __name__ == "__main__":
-    train()
+    # Choose between regular training or profiling
+    MODE = "profile"  # Change to "train" for normal training
+    
+    if MODE == "train":
+        train()
+    elif MODE == "profile":
+        profile_train()  # Reduced games for faster profiling
