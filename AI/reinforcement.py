@@ -8,6 +8,7 @@
 
 # NB: for supervised learning parity i should train approx 100k games (equivalent-ish to 20MM chess position)
 
+import datetime
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,7 +19,6 @@ import random
 from collections import deque
 import time
 import os
-from torch.utils.tensorboard import SummaryWriter
 import cProfile
 import pstats  # For analyzing cProfile output
 import io
@@ -184,91 +184,263 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
-class MonteCarloTreeSearch:
-    """
-    Monte Carlo Tree Search implementation for chess
-    """
+class OptimizedMonteCarloTreeSearch:
     class Node:
-        def __init__(self, board=None, parent=None, prior_prob=1.0):
-            self.board = board
+        __slots__ = ['snapshot', 'parent', 'children', 'visits', 'value_sum', 'prior_prob']
+
+        def __init__(self, snapshot=None, parent=None, prior_prob=1.0):
+            self.snapshot = snapshot
             self.parent = parent
             self.children = {}
             self.visits = 0
             self.value_sum = 0
             self.prior_prob = prior_prob
-        
+
         def q_value(self):
             """Average value of the node"""
             return self.value_sum / (self.visits + 1e-8)
-        
+
         def u_value(self, exploration_constant=1.4):
             """Upper confidence bound value"""
             return exploration_constant * self.prior_prob * np.sqrt(self.parent.visits) / (1 + self.visits)
-        
+
         def select_child(self):
             """Select child with highest Q + U value"""
-            return max(self.children.items(), 
+            return max(self.children.items(),
                        key=lambda child: child[1].q_value() + child[1].u_value())
 
-    def __init__(self, agent, num_simulations=10):
+    class LightweightBoard:
+        def __init__(self, board):
+            self.move_stack = list(board.move_stack)  # Store move history
+            self.turn = board.turn
+            self.castling_rights = board.castling_rights 
+            self.ep_square = board.ep_square  
+            self.halfmove_clock = board.halfmove_clock
+
+        def restore(self, original_board):
+            original_board.reset()
+            original_board.turn = self.turn
+            original_board.castling_rights = self.castling_rights  # RESTORE
+            original_board.ep_square = self.ep_square
+            original_board.halfmove_clock = self.halfmove_clock
+            for move in self.move_stack:
+                original_board.push(move)
+
+    def __init__(self, agent, num_simulations=20, use_pruning=True):
         self.agent = agent
         self.num_simulations = num_simulations
-    
+        self.use_pruning = use_pruning
+        self.max_workers = 1
+
     def run_search(self, board):
         """
-        Run MCTS to select the best move
+        Run MCTS with optional pruning and potential parallelization
         """
-        root = self.Node(board.copy())
-        
-        for _ in range(self.num_simulations):
+        root = self.Node(self.LightweightBoard(board))  # Initialize with snapshot
+        search_board = chess.Board()  # Single reusable board
+        root.snapshot.restore(search_board)  # Load initial state
+
+        # Parallel simulation execution
+        if self.max_workers > 1:
+            return self._parallel_search(root, board)
+
+        # Sequential search with optional pruning
+        for _ in range(self.num_simulations):   
             node = root
-            search_board = board.copy()
-            
-            # Selection phase
+            node.snapshot.restore(search_board)  # Reuse board
+
+            # Selection phase with optional pruning
             while node.children and not search_board.is_game_over():
+                if self.use_pruning:
+                    # Prune less promising branches
+                    node = self._prune_branches(node)
+
+                # Additional safety check
+                if not node.children:
+                    break
+
                 move, node = node.select_child()
                 search_board.push(move)
-            
-            # Expansion phase
+
+            # Expansion and evaluation phases
             if not search_board.is_game_over():
-                # Get policy probabilities from neural network
-                state = self.agent.encoder.encode_board(search_board).unsqueeze(0).to(self.agent.device)
+                state = self.agent.encode_board_cached(search_board).unsqueeze(0).to(self.agent.device)
                 with torch.no_grad():
                     policy_logits, value = self.agent.network(state)
-                
+
                 # Expand node with legal moves
-                for move in search_board.legal_moves:
+                legal_moves = list(search_board.legal_moves)
+
+                # Optional move pruning
+                if self.use_pruning:
+                    legal_moves = self._prune_moves(search_board, policy_logits)
+
+                # Catch case of no legal moves
+                if not legal_moves:
+                    print(f"Warning: No legal moves found for board state: {search_board.fen()}")
+                    break
+
+                policy_probs = F.softmax(policy_logits, dim=1).squeeze().cpu().numpy()
+                for move in legal_moves:
                     move_idx = self.agent.encode_move(move)
-                    prior_prob = F.softmax(policy_logits, dim=1)[0][move_idx].item()
+                    prior_prob = policy_probs[move_idx]
+                    search_board.push(move) # Push move to the REUSABLE board
+                    child_snapshot = self.LightweightBoard(search_board) # Create snapshot of CURRENT STATE
                     
-                    child_board = search_board.copy()
-                    child_board.push(move)
-                    child_node = self.Node(child_board, parent=node, prior_prob=prior_prob)
+                    # Create node with SNAPSHOT (not full board)
+                    child_node = self.Node(
+                        snapshot=child_snapshot,  # <-- KEY CHANGE: Store snapshot, not full board
+                        parent=node,
+                        prior_prob=prior_prob
+                    )
                     node.children[move] = child_node
-                
-                # Evaluate position with network
+                    
+                    # Undo move to reuse board
+                    search_board.pop()
+
                 value = value.squeeze().item()
             else:
-                # Game over: determine value
                 value = self._get_game_result(search_board)
-            
+
             # Backpropagation
-            while node:
-                node.visits += 1
-                node.value_sum += value
-                value = -value  # Alternate value for alternating players
-                node = node.parent
+            self._backpropagate(node, value)
+
+        # Robust move selection with fallback
+        if root.children:
+            return max(root.children.items(), key=lambda x: x[1].visits)[0]
+        else:
+            # Fallback to selecting a random legal move
+            legal_moves = list(board.legal_moves)
+            if legal_moves:
+                print("MCTS failed to create children. Selecting a random legal move.")
+                return random.choice(legal_moves)
+            else:
+                raise ValueError("No legal moves available")
         
+    def _single_simulation(self, root, snapshot):
+        """Perform a single MCTS simulation"""
+        node = root
+        search_board = chess.Board()  # Create fresh board
+        snapshot.restore(search_board)  # Restore state from snapshot
+
+
+        # Selection phase with optional pruning
+        while node.children and not search_board.is_game_over():
+            if self.use_pruning:
+                # Prune less promising branches
+                node = self._prune_branches(node)
+
+            move, node = node.select_child()
+            search_board.push(move)
+
+        # Expansion and evaluation phases (similar to previous implementation)
+        if not search_board.is_game_over():
+            state = self.agent.encode_board_cached(search_board).unsqueeze(0).to(self.agent.device)
+            with torch.no_grad():
+                policy_logits, value = self.agent.network(state)
+
+            # Expand node with legal moves
+            legal_moves = list(search_board.legal_moves)
+
+            # Optional move pruning
+            if self.use_pruning:
+                legal_moves = self._prune_moves(search_board, policy_logits)
+
+            for move in legal_moves:
+                move_idx = self.agent.encode_move(move)
+                prior_prob = F.softmax(policy_logits, dim=1)[0][move_idx].item()
+
+                # Push move to the REUSABLE board
+                search_board.push(move)
+                
+                # Create snapshot of CURRENT STATE
+                child_snapshot = self.LightweightBoard(search_board)
+                
+                # Create node with SNAPSHOT
+                child_node = self.Node(
+                    snapshot=child_snapshot,  # Store snapshot instead of full board
+                    parent=node,
+                    prior_prob=prior_prob
+                )
+                node.children[move] = child_node
+                
+                # Undo move to reuse board
+                search_board.pop()
+
+            value = value.squeeze().item()
+        else:
+            value = self._get_game_result(search_board)
+
+        # Backpropagation
+        self._backpropagate(node, value)
+
+        return value
+
+    def _parallel_search(self, root, board):
+        """Parallel MCTS simulations"""
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            initial_snapshot = self.LightweightBoard(board)
+            futures = [executor.submit(self._single_simulation, root, initial_snapshot) for _ in range(self.num_simulations)]
+
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Simulation failed: {e}")
+
         # Select move with most visits
-        best_move = max(root.children.items(), key=lambda x: x[1].visits)[0]
-        return best_move
-    
+        return max(root.children.items(), key=lambda x: x[1].visits)[0]
+
+    def _prune_branches(self, node, pruning_threshold=0.1):
+        """Prune less promising branches based on visit count"""
+        if not node.children:
+            return node
+
+        # Sort children by visits
+        sorted_children = sorted(node.children.items(), key=lambda x: x[1].visits, reverse=True)
+
+        # Keep only top children that meet a visit threshold
+        pruned_children = {
+            move: child for move, child in sorted_children
+            if child.visits >= pruning_threshold * node.visits
+        }
+
+        node.children = pruned_children
+        return node
+
+    def _prune_moves(self, board, policy_logits, top_k=10):
+        """Prune moves based on policy network confidence"""
+        legal_moves = list(board.legal_moves)
+
+        # Get move probabilities
+        probs = F.softmax(policy_logits, dim=1).squeeze().cpu().numpy()
+
+        # Sort moves by probability
+        move_probs = [
+            (move, probs[self.agent.encode_move(move)])
+            for move in legal_moves
+        ]
+        move_probs.sort(key=lambda x: x[1], reverse=True)
+
+        # Return top K moves
+        return [move for move, _ in move_probs[:top_k]]
+
+    def _backpropagate(self, node, value):
+        """Efficient backpropagation without recursive calls"""
+        while node:
+            node.visits += 1
+            node.value_sum += value
+            value = -value  # Alternate value for alternating players
+            node = node.parent
+
     def _get_game_result(self, board):
         """Determine game result value"""
         if board.is_checkmate():
             return -1.0 if board.turn else 1.0
         return 0.0  # Draw or other termination
-
+    
 class ChessRL:
     """Main chess reinforcement learning class"""
     
@@ -281,9 +453,19 @@ class ChessRL:
         self.optimizer = optim.Adam(self.network.parameters(), lr=learning_rate, weight_decay=1e-4) #weight_decay = L2 regularization
         self.replay_buffer = ReplayBuffer(capacity=50000)
         self.batch_size = batch_size
-        self.mcts = MonteCarloTreeSearch(self, num_simulations=10)
-        
-        self.debug_mode = False # For debugging, setto true se voglio printare tutte le varie info di debugging
+        self.mcts = OptimizedMonteCarloTreeSearch(
+            agent=self, 
+            num_simulations=20,  # Increased from 10
+            use_pruning=True      # Enable pruning
+        )
+        self.board_cache = {}  # FEN → encoded tensor
+
+    def encode_board_cached(self, board):
+        """Encode board with caching."""
+        fen = board.fen().split(" ")[0]  # Exclude move counters
+        if fen not in self.board_cache:
+            self.board_cache[fen] = self.encoder.encode_board(board)
+        return self.board_cache[fen]
     
     def encode_move(self, move):
         """Convert chess move to index in policy output tensor (one-hot encoding)"""
@@ -310,9 +492,8 @@ class ChessRL:
                 move_idx = self.encode_move(move)
                 mask[move_idx] = 1
             except Exception as e:
-                if self.debug_mode:
-                    print(f"Error encoding move {move}: {e}")
-                continue
+                print(f"Error encoding move {move}: {e}")
+            continue
         
         return mask
     
@@ -327,19 +508,14 @@ class ChessRL:
                 # Use MCTS to select move
                 mcts_move = self.mcts.run_search(board)
                 
-                # Debug info if needed
-                if self.debug_mode:
-                    print(f"MCTS selected move: {mcts_move.uci()}")
-                
                 return mcts_move
             except Exception as e:
-                if self.debug_mode:
-                    print(f"MCTS failed, falling back to policy network: {e}")
+                print(f"MCTS failed, falling back to policy network: {e}")
         
         # Fallback to original policy network selection
         self.network.eval()
         
-        state = self.encoder.encode_board(board).unsqueeze(0).to(self.device)
+        state = self.encode_board_cached(board).unsqueeze(0).to(self.device)
         
         # Get move probabilities from policy network
         with torch.no_grad():
@@ -373,8 +549,6 @@ class ChessRL:
                     return legal_move
             
             # Fallback to a random legal move if the selected move is not legal
-            if self.debug_mode:
-                print(f"Warning: Selected move {move} is not legal. Selecting random move.")
             return random.choice(list(board.legal_moves))
     
     def train_batch(self):
@@ -441,10 +615,6 @@ def play_game(agent, temperature_schedule=None, max_moves=100):
     move_count = 0
     repetition_count = {}  # Track position repetitions
     
-    # Debug info
-    if agent.debug_mode:
-        print("Starting new game")
-    
     # Play until game over or max moves reached
     while not board.is_game_over() and move_count < max_moves:
         # Store current board state for repetition detection
@@ -458,15 +628,13 @@ def play_game(agent, temperature_schedule=None, max_moves=100):
                 temperature = temperature_schedule[threshold]
         
         # Encode current state
-        state = agent.encoder.encode_board(board).unsqueeze(0)
+        state = agent.encode_board_cached(board).unsqueeze(0)
         
         # Create policy target (will be filled later with actual policy)
         policy_target = torch.zeros(4096, device=agent.device)
         
         # Detect repetitions and force random move to avoid loops
         if repetition_count.get(board_key, 0) > 2:
-            if agent.debug_mode:
-                print(f"Position repeated, making random move")
             legal_moves = list(board.legal_moves)
             if legal_moves:
                 move = random.choice(legal_moves)
@@ -483,8 +651,6 @@ def play_game(agent, temperature_schedule=None, max_moves=100):
                 move_idx = agent.encode_move(move)
                 policy_target[move_idx] = 1.0
             except Exception as e:
-                if agent.debug_mode:
-                    print(f"Error creating policy target: {e}")
                 move_idx = 0
         
         # Store state and policy for training
@@ -495,13 +661,7 @@ def play_game(agent, temperature_schedule=None, max_moves=100):
             board.push(move)
             move_count += 1
         except Exception as e:
-            if agent.debug_mode:
-                print(f"Error making move {move}: {e}")
             break
-    
-    # Print a single summary after the game is done.
-    print(f"Game ended after {move_count} moves. Result: {board.result()}")
-    print(f"Game over reason: checkmate={board.is_checkmate()}, stalemate={board.is_stalemate()}, "f"insufficient={board.is_insufficient_material()}, fifty={board.is_fifty_moves()}, repetition={board.is_repetition()}")
     
     # Determine game result
     if board.is_checkmate():
@@ -526,17 +686,14 @@ def play_game(agent, temperature_schedule=None, max_moves=100):
         
         # Add to replay buffer
         agent.replay_buffer.add(state, policy_target, value_target)
-        if len(agent.replay_buffer) % 100 == 0:
-            print(f"Replay buffer length: {len(agent.replay_buffer)}")
 
     return result, move_count
 
-def train(num_games=10000, batch_size=512, save_interval=1000, debug_interval=100):
+def train(num_games=10000, batch_size=512, save_interval=1000):
     """Train the agent through self-play"""
     agent = ChessRL(batch_size=batch_size)
     
     # Create model directory if it doesn't exist and initialize TensorBoard writer
-    writer = SummaryWriter("runs/chess_training")  # Create a log directory
     os.makedirs("models", exist_ok=True)
 
     # Training statistics
@@ -553,11 +710,8 @@ def train(num_games=10000, batch_size=512, save_interval=1000, debug_interval=10
     
     print(f"Starting training for {num_games} games with batch size {batch_size}")
     print(f"Saving models every {save_interval} games")
-    print(f"Debug output every {debug_interval} games")
 
     for game_num in range(num_games):
-        agent.debug_mode = False
-        #agent.debug_mode = (game_num % debug_interval == 0)
         
         # Play a complete game
         result, moves = play_game(agent)
@@ -571,43 +725,34 @@ def train(num_games=10000, batch_size=512, save_interval=1000, debug_interval=10
         else:
             stats["draws"] += 1
 
-        # Log metrics to TensorBoard
-        writer.add_scalar("White Wins", stats["white_wins"] / (game_num + 1), game_num)
-        writer.add_scalar("Black Wins", stats["black_wins"] / (game_num + 1), game_num)
-        writer.add_scalar("Draws", stats["draws"] / (game_num + 1), game_num)
-        writer.add_scalar("Average Game Length", np.mean(stats["game_lengths"]), game_num)
-        
         # Train after each game
         policy_loss, value_loss = agent.train_batch()
+
         if policy_loss > 0:  # Only record if we actually trained
             stats["policy_losses"].append(policy_loss)
             stats["value_losses"].append(value_loss)
         
-            # Log losses to TensorBoard
-            writer.add_scalar("Policy Loss", policy_loss, game_num)
-            writer.add_scalar("Value Loss", value_loss, game_num)
-
-        # Print progress
-        if (game_num + 1) % debug_interval == 0:
+        # Log metrics (ex TensorBoard) every 10 games
+        if (game_num + 1) % 10 == 0: # Changed frequency to 100
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             elapsed = time.time() - start_time
             games_per_second = (game_num + 1) / elapsed
             avg_game_length = np.mean(stats["game_lengths"][-100:]) if stats["game_lengths"] else 0
-            
-            # Calculate recent metrics
             recent_policy_loss = np.mean(stats["policy_losses"][-100:]) if stats["policy_losses"] else 0
             recent_value_loss = np.mean(stats["value_losses"][-100:]) if stats["value_losses"] else 0
-            
-            print(f"\nGame {game_num+1}/{num_games} ({elapsed:.1f}s, {games_per_second:.2f} games/s)")
-            print(f"W:{stats['white_wins']} B:{stats['black_wins']} D:{stats['draws']} " 
-                  f"Avg moves:{avg_game_length:.1f} PL:{recent_policy_loss:.4f} VL:{recent_value_loss:.4f}")
-        
-            # Log metrics to TensorBoard
-            writer.add_scalar("White Wins", stats["white_wins"], game_num)
-            writer.add_scalar("Black Wins", stats["black_wins"], game_num)
-            writer.add_scalar("Draws", stats["draws"], game_num)
-            writer.add_scalar("Average Game Length", avg_game_length, game_num)
-            writer.add_scalar("Recent Policy Loss", recent_policy_loss, game_num)
-            writer.add_scalar("Recent Value Loss", recent_value_loss, game_num)
+
+            white_win_rate = stats['white_wins'] / (game_num + 1)
+            black_win_rate = stats['black_wins'] / (game_num + 1)
+            draw_rate = stats['draws'] / (game_num + 1)
+
+            log_output = (
+                f"[{timestamp}] Game {game_num+1:6d} ({elapsed:.1f}s, {games_per_second:.2f} games/s)\n" # Added games/s
+                f"  Win Rate: W={white_win_rate:.3%} B={black_win_rate:.3%} D={draw_rate:.3%}\n" # Win/Draw rates as percentages
+                f"  Wins (Abs): W={stats['white_wins']:4d} B={stats['black_wins']:4d} D={stats['draws']:4d}\n" # Absolute wins/draws
+                f"  Avg Moves (Recent 100): {avg_game_length:.1f}\n" # Avg moves (recent)
+                f"  Loss (Recent 100): PL={recent_policy_loss:.4f} VL={recent_value_loss:.4f}" # Recent Losses
+            )
+            print(log_output)
 
         # Save periodically
         if (game_num + 1) % save_interval == 0:
@@ -625,11 +770,9 @@ def train(num_games=10000, batch_size=512, save_interval=1000, debug_interval=10
     print(f"Draws: {stats['draws']} ({stats['draws']/num_games:.1%})")
     print(f"Average game length: {np.mean(stats['game_lengths']):.1f} moves")
     
-    writer.close() # Close TensorBoard writer
-    
     return agent
 
-def profile_train(num_games=10):
+def profile_train(num_games=100):
     """
     Profile the training process using cProfile and generate human-readable reports
     
@@ -703,6 +846,6 @@ if __name__ == "__main__":
     MODE = "profile"  # Change to "train" for normal training
     
     if MODE == "train":
-        train()
+        train(num_games=10)
     elif MODE == "profile":
         profile_train()  # Reduced games for faster profiling
