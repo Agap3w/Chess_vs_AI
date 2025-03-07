@@ -28,6 +28,7 @@ import chess
 from AI.heuristic import heuristic_best_move
 from AI.minimax import minimax_best_move
 import AI.supervised_prediction
+import AI.reinforcement_prediction
 from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE, PIECE_VALUES, PIECE_POS_TABLE, INTRO, OUTRO
 
 
@@ -42,7 +43,8 @@ class ChessGame:
         self.board_score = BoardScore(self.game_logic.board)
 
         # predictor per supervised model
-        self.predictor = None
+        self.predictorS = None
+        self.predictorR = None
 
         # inizializzo alcuni parametri che userò nel main loop
         self.running = True
@@ -90,9 +92,13 @@ class ChessGame:
             elif self.opponent == 2:
                 ai_move = minimax_best_move(self.game_logic.board, self.board_score)
             elif self.opponent == 3:
-                if self.predictor is None:
-                    self.predictor = AI.supervised_prediction.ChessMovePredictor()
-                ai_move = AI.supervised_prediction.supervised_move(self.game_logic.board, self.predictor)
+                if self.predictorS is None:
+                    self.predictorS = AI.supervised_prediction.ChessMovePredictor()
+                ai_move = AI.supervised_prediction.supervised_move(self.game_logic.board, self.predictorS)
+            elif self.opponent == 4:
+                if self.predictorR is None:
+                    self.predictorR = AI.reinforcement_prediction.ChessMovePredictor()
+                ai_move = self.predictorR.predict_move(self.game_logic.board)
             
             # Se esiste una AI best move, eseguo mossa + suono
             if ai_move:
@@ -130,6 +136,11 @@ class ChessGame:
 
             if self.gui.get_submit_button_rect()["Super V"].collidepoint(pos):
                 self.opponent = 3
+                self.game_state = "playing"
+                self.gui.redraw_needed = True
+
+            if self.gui.get_submit_button_rect()["Reinforce"].collidepoint(pos):
+                self.opponent = 4
                 self.game_state = "playing"
                 self.gui.redraw_needed = True
 

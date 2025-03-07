@@ -1,16 +1,16 @@
 Performance Profiling Summary
 ==============================
 
-Total Profiling Time: 4752.0787 seconds
+Total Profiling Time: 906.9590 seconds
 
 Top 10 Time-Consuming Functions:
-- {}: 596.6491 sec (100 calls)
-- {('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement.py', 602, 'play_game'): (9111, 9111, 0.07447390000000001, 592.9924165)}: 592.9924 sec (9111 calls)
-- {('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement.py', 500, 'select_move'): (9111, 9111, 9.6885498, 592.9147841)}: 592.9148 sec (9111 calls)
-- {('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement.py', 97, 'forward'): (4375656, 4375656, 3.5325184000000003, 233.3840519), ('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement.py', 554, 'train_batch'): (99, 99, 0.00024690000000000004, 0.2814875), ('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement.py', 235, 'run_search'): (182220, 182220, 0.23175830000000003, 400.2787298), ('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement.py', 137, 'forward'): (2552466, 2552466, 2.0792148, 383.2690015), ('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\torch\\nn\\modules\\container.py', 248, 'forward'): (1640871, 1640871, 1.3250861, 65.2277662)}: 400.5602 sec (182319 calls)
-- {('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\torch\\nn\\modules\\module.py', 1735, '_wrapped_call_impl'): (8751312, 182319, 10.5838362, 400.32821210000003)}: 400.3282 sec (182319 calls)
-- {('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\torch\\nn\\modules\\module.py', 1743, '_call_impl'): (182319, 182319, 5.2532658, 399.5468161)}: 399.5468 sec (182319 calls)
-- {('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\torch\\nn\\modules\\module.py', 1743, '_call_impl'): (1093914, 1093914, 20.954892, 281.5007458)}: 281.5007 sec (1093914 calls)
-- {('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\torch\\nn\\modules\\module.py', 1743, '_call_impl'): (2734785, 2734785, 2.3431243, 139.70864690000002)}: 139.7086 sec (2734785 calls)
-- {('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\torch\\nn\\modules\\conv.py', 553, 'forward'): (2734785, 2734785, 2.3729810000000002, 136.2767669)}: 136.2768 sec (2734785 calls)
-- {('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\torch\\nn\\modules\\module.py', 1743, '_call_impl'): (2734785, 2734785, 8.1762169, 135.68094100000002)}: 135.6809 sec (2734785 calls)
+- {}: 178.7329 sec (10 calls)
+- {('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement ds.py', 682, 'play_game'): (1313, 1313, 0.171417, 177.79321090000002)}: 177.7932 sec (1313 calls)
+- {('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement ds.py', 562, 'select_move'): (1313, 1313, 13.480314600000002, 177.6213022)}: 177.6213 sec (1313 calls)
+- {('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement ds.py', 257, 'run_search'): (1729513, 1729513, 27.1554925, 58.3311932)}: 58.3312 sec (1729513 calls)
+- {('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\chess\\__init__.py', 1014, '_remove_piece_at'): (6918058, 6918058, 1.0814717, 1.0814717), ('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\chess\\__init__.py', 2310, 'push'): (1664004, 1664004, 0.22929970000000002, 0.22929970000000002), ('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\chess\\__init__.py', 825, 'piece_at'): (11768532, 11768532, 1.8958327000000001, 1.8958327000000001), ('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement ds.py', 229, '__init__'): (157983816, 157983816, 21.280217, 21.280217)}: 24.4868 sec (178334410 calls)
+- {('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement ds.py', 257, 'run_search'): (131300, 131300, 4.0603899000000006, 23.751273400000002)}: 23.7513 sec (131300 calls)
+- {('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement ds.py', 257, 'run_search'): (65650, 65650, 21.091229000000002, 21.091229000000002)}: 21.0912 sec (65650 calls)
+- {('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement ds.py', 238, 'restore'): (3588400, 3588400, 2.1279716, 18.3418841)}: 18.3419 sec (3588400 calls)
+- {('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\torch\\optim\\optimizer.py', 101, '_get_value'): (1120, 1120, 0.0006731, 0.0006731), ('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement ds.py', 257, 'run_search'): (65650, 65650, 16.0324163, 16.0324163), ('c:\\Users\\Matte\\main_matte_py\\Chess_vs_AI\\AI\\reinforcement ds.py', 638, 'train_batch'): (20, 20, 0.052209500000000006, 0.052209500000000006), ('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\torch\\amp\\grad_scaler.py', 351, '<genexpr>'): (10, 10, 1.303584, 1.303584)}: 17.3889 sec (66800 calls)
+- {('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\chess\\__init__.py', 2310, 'push'): (1664554, 1664554, 0.8945549, 1.7115522), ('C:\\Users\\Matte\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\chess\\__init__.py', 1078, 'set_piece_at'): (3588400, 3588400, 11.5677766, 13.279502800000001)}: 14.9911 sec (5252954 calls)

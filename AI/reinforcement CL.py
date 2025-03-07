@@ -1,13 +1,3 @@
-# analize profiling to identify bottleneck
-# remove bottleneck and reduce training time
-# fix print reporting (progression indicator) --> aggiungo ora, setto solo main recap stat (% draw, avg lenght, policy e value loss) ogni... 100 games? 
-# improve NN if roam for more CPU usage (and not possible to further increase batch size)
-
-# try 1 run 1,000 games?
-# analize results and improve model
-
-# NB: for supervised learning parity i should train approx 100k games (equivalent-ish to 20MM chess position)
-
 import datetime
 import torch
 import torch.nn as nn
@@ -234,31 +224,29 @@ class OptimizedMonteCarloTreeSearch:
                        key=lambda child: child[1].q_value() + child[1].u_value())
 
     class LightweightBoard:
+        __slots__ = ['pieces', 'turn', 'castling', 'ep_square', 'halfmove_clock']
+        
         def __init__(self, board):
-            self.move_stack = tuple(board.move_stack)  # Store move history
+            # Store minimal board state using bitboards or arrays instead of FEN strings
+            self.pieces = np.array([board.piece_type_at(sq) * (1 if board.color_at(sq) else -1) 
+                                if board.piece_type_at(sq) else 0 for sq in range(64)], dtype=np.int8)
             self.turn = board.turn
-            self.castling_rights = board.castling_rights 
-            self.ep_square = board.ep_square  
+            self.castling = board.castling_rights
+            self.ep_square = board.ep_square
             self.halfmove_clock = board.halfmove_clock
-
+        
         def restore(self, original_board):
-            # Optimize restoration by checking if we need a full reset
-            if len(original_board.move_stack) > len(self.move_stack):
-                original_board.reset()
-                for move in self.move_stack:
-                    original_board.push(move)
-            else:
-                # Pop moves until we match the target state
-                while len(original_board.move_stack) > len(self.move_stack):
-                    original_board.pop()
-                
-                # Apply the remaining settings
-                original_board.turn = self.turn
-                original_board.castling_rights = self.castling_rights
-                original_board.ep_square = self.ep_square
-                original_board.halfmove_clock = self.halfmove_clock
-            for move in self.move_stack:
-                original_board.push(move)
+            original_board.clear()
+            for sq in range(64):
+                piece_type = abs(self.pieces[sq])
+                if piece_type:
+                    color = self.pieces[sq] > 0
+                    original_board.set_piece_at(sq, chess.Piece(piece_type, color))
+            
+            original_board.turn = self.turn
+            original_board.castling_rights = self.castling
+            original_board.ep_square = self.ep_square
+            original_board.halfmove_clock = self.halfmove_clock
 
     def __init__(self, agent, num_simulations=100, use_pruning=False):
         self.agent = agent
@@ -271,7 +259,7 @@ class OptimizedMonteCarloTreeSearch:
         root = self.Node(self.LightweightBoard(board))
 
         # Batch collection variables
-        batch_size = 64  # Adjust based on GPU memory
+        batch_size = 512  # Scale with simulations
         leaf_states = []
         leaf_nodes = []
         search_snapshots = []
@@ -312,8 +300,9 @@ class OptimizedMonteCarloTreeSearch:
             if len(leaf_states) >= batch_size or sim == self.num_simulations - 1:
                 if leaf_states:
                     # Batch evaluation
-                    batched_states = torch.stack(leaf_states).to(self.agent.device)
-                    with torch.no_grad():
+                    batched_states = torch.stack(leaf_states).pin_memory().to(self.agent.device, non_blocking=True)
+                    # Mixed precision evaluation
+                    with torch.amp.autocast(device_type='cuda', dtype=torch.float16), torch.no_grad():
                         batched_policies, batched_values = self.agent.network(batched_states)
                     
                     # Process each leaf node in the batch
@@ -486,13 +475,8 @@ class OptimizedMonteCarloTreeSearch:
             node = node.parent
 
     def _get_game_result(self, board):
-        if board.is_checkmate():
-            return -10.0 if board.turn else 10.0  # Larger checkmate reward
-        elif board.is_stalemate():
-            return -2.0 if board.turn else 2.0  # Penalize stalemates
-        elif board.is_repetition():
-            return -3.0 if board.turn else 3.0  # Harsh penalty for repetition
-        return 0.0
+        value, _ = self.agent.calculate_game_result(board)
+        return value or 0.0
     
 class ChessRL:
     """Main chess reinforcement learning class"""
@@ -542,17 +526,16 @@ class ChessRL:
         """Convert chess move to index in policy output tensor (one-hot encoding)"""
         from_square = move.from_square
         to_square = move.to_square
+
+        if move.promotion and move.promotion != chess.QUEEN:
+            move = chess.Move(from_square, to_square, promotion=chess.QUEEN)
+
         return from_square * 64 + to_square
     
     def decode_move(self, move_idx):
         """Convert policy index back to chess move with promotion handling"""
         from_square = move_idx // 64
         to_square = move_idx % 64
-        
-        # Create temporary board to check move validity
-        temp_board = chess.Board()
-        temp_board.clear()
-        temp_board.set_piece_at(from_square, chess.Piece(chess.PAWN, chess.WHITE))
         
         # Check if promotion is needed
         if chess.square_rank(to_square) in [0, 7]:
@@ -561,21 +544,16 @@ class ChessRL:
         return chess.Move(from_square, to_square)
     
     def get_legal_moves_mask(self, board):
-        """Create a mask of legal moves (4096, hot encoded)"""
+        """Generate mask with only queen promotions"""
         mask = torch.zeros(4096, device=self.device)
         
         for move in board.legal_moves:
-            # Handle all promotion types properly
-            try:
-                if move.promotion:
-                    # Encode promotion move as queen promotion
-                    base_move = chess.Move(move.from_square, move.to_square, promotion=chess.QUEEN)
-                    move_idx = self.encode_move(base_move)
-                else:
-                    move_idx = self.encode_move(move)
-                mask[move_idx] = 1
-            except Exception as e:
-                print(f"Error encoding move {move}: {e}")
+            # Convert all promotions to queen promotions
+            if move.promotion and move.promotion != chess.QUEEN:
+                move = chess.Move(move.from_square, move.to_square, 
+                                promotion=chess.QUEEN)
+            
+            mask[self.encode_move(move)] = 1
         
         return mask
     
@@ -632,6 +610,28 @@ class ChessRL:
             
             # Fallback to a random legal move if the selected move is not legal
             return random.choice(list(board.legal_moves))
+    
+    def calculate_game_result(self, board):
+        """Returns tuple: (value_target, result_string)"""
+        if board.is_checkmate():
+            value = -1.0 if board.turn else 1.0
+            return (value, "1-0" if not board.turn else "0-1")
+            
+        if board.is_stalemate():
+            value = -0.2 if board.turn else 0.2
+            return (value, "1/2-1/2 (stalemate)")
+            
+        if board.is_insufficient_material():
+            return (0.0, "1/2-1/2 (insufficient material)")
+            
+        if board.is_fifty_moves():
+            return (0.0, "1/2-1/2 (50-move rule)")
+            
+        if board.is_repetition():
+            value = -0.3 if board.turn else 0.3
+            return (value, "1/2-1/2 (repetition)")
+            
+        return (None, None)  # Game ongoing
     
     def train_batch(self):
         """Train on a batch of data from the replay buffer"""
@@ -757,17 +757,13 @@ def play_game(agent, temperature_schedule=None, max_moves=150):
             break
     
     # Determine game result
-    if board.is_checkmate():
-        result_value = -5.0  # Last player to move lost
-        result = "1-0" if not board.turn else "0-1"
-    elif board.is_stalemate() or board.is_insufficient_material() or board.is_fifty_moves() or board.is_repetition():
-        result_value = 0.0  # Draw
-        result = "1/2-1/2"
-    else:
-        # Game terminated by move limit
-        result_value = 0.0  # Draw
-        result = "1/2-1/2 (move limit)"
+    result_value, result = agent.calculate_game_result(board)
     
+    # Handle move limit case
+    if result_value is None:
+        result_value = 0.0
+        result = "1/2-1/2 (move limit)"   
+
     # Calculate rarity scores (inverse frequency)
     for idx, history_entry in enumerate(game_history):
         # Calculate value target based on game result and player turn
