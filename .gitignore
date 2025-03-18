@@ -2,6 +2,7 @@
 AI/data/
 AI/resources/chess_model
 models
+runs
 
 # ignore cache and bytecode
 __pycache__/
