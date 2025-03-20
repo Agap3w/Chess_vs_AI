@@ -5,8 +5,8 @@ import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from tqdm import trange
-from reinf_encodeMove import move_to_index, index_to_move
+from tqdm import tqdm
+from AI.reinf_encodeMove import move_to_index, index_to_move
 
 class ChessGame:
     """ basic chess engine """
@@ -26,10 +26,15 @@ class ChessGame:
         return list(state.legal_moves)
         
     def get_value_and_terminated(self, state):
+        # Most common case first: game is ongoing
         if not state.is_game_over():
-            return 0, False
+            return 0, False  # No termination, value 0
+        
+        # Check for checkmate (current player loses)
         if state.is_checkmate():
             return -1, True
+        
+        # All other terminal states (draws)
         return 0, True
 
     def get_opponent_value(self, value):
@@ -101,7 +106,7 @@ class ChessGame:
         return planes
 
 class ResNet(nn.Module):
-    def __init__(self, device, channel=14, num_ResBlock=8, num_hidden=128):
+    def __init__(self, device, channel=14, num_ResBlock=14, num_hidden=196):
         super().__init__()
         self.device = device
         self.startBlock = nn.Sequential(
@@ -140,36 +145,7 @@ class ResNet(nn.Module):
         policy = self.policyHead(x)
         value = self.valueHead(x)
         return policy, value
-
-    @torch.no_grad()         
-    def predict(self, state):
-        """
-        Predict policy and value for a given board state.
-        
-        Args:
-            state: A chess.Board object
-        
-        Returns:
-            tuple: (policy, value) where policy is a numpy array of shape (4096,)
-                  and value is a float in the range [-1, 1]
-        """
-        # Convert board to planes
-        planes = ChessGame.board_to_tensor(state)
-        
-        # Add batch dimension and convert to tensor
-        x = torch.tensor(planes, dtype=torch.float32, device=self.device).unsqueeze(0)
-        
-        # Forward pass
-        policy_logits, value = self.forward(x)
-        
-        # Convert policy logits to probabilities
-        policy = F.softmax(policy_logits, dim=1).detach().cpu().numpy()[0]
-        
-        # Get value as scalar
-        value = value.item()
-        
-        return policy, value
-    
+  
     @torch.no_grad()         
     def batch_predict(self, states):
         """
@@ -230,7 +206,7 @@ class Node:
 
         self.children = []
 
-        self.visit_count = 0
+        self.visit_count = 1 if parent is None else 0  # Root starts at 1
         self.value_sum = 0
 
     def is_fully_expanded(self):
@@ -256,6 +232,14 @@ class Node:
         return q_value + self.args['C'] * (math.sqrt(self.visit_count)/(child.visit_count + 1)) * child.prior
     
     def expand(self, policy):
+        if self.parent is None:  # Root node
+            legal_indices = np.where(policy > 0)[0]
+            if len(legal_indices) > 0:
+                dir_alpha = self.args.get('dir_alpha', 0.3)
+                legal_probs = policy[legal_indices]
+                dir_noise = np.random.dirichlet([dir_alpha] * len(legal_indices))
+                policy[legal_indices] = 0.97 * legal_probs + 0.03 * dir_noise
+
         for action_idx, prob in enumerate(policy):
             if prob > 0:
                 action = index_to_move(action_idx)
@@ -281,28 +265,48 @@ class MCTS:
         self.model = model
 
     @torch.no_grad()
-    def search(self, state, root_node):
+    def search(self, root_node):
         root_node.args = self.args
+        leaf_buffer = []
+        
+        # SINGLE TREE FOR ALL SEARCHES
         for _ in range(self.args['num_searches']):
-            node = root_node
-
-            # SELECTION - find the most promising expandable node
+            node = root_node  # Always start from original root
+            
+            # SELECTION
             while node.is_fully_expanded():
-                selected_node = node.select()
-                if selected_node is None:  # If select returns None, break
+                node = node.select()
+                if node is None:
                     break
-                node = selected_node
-
+            
+            # TERMINAL CHECK
             value, is_terminal = self.game.get_value_and_terminated(node.state)
-            if not is_terminal:
-                policy, value = self.model.predict(node.state)
-                legal_policy = self._mask_policy_to_legal_moves(policy, node.state)
+            if is_terminal:
+                node.backpropagate(value)
+                continue
+            
+            # STORE LEAF FOR BATCH PROCESSING
+            leaf_buffer.append(node)
+            
+            # BATCH EVALUATION
+            if len(leaf_buffer) >= self.args['mcts_batch_size']:
+                self._process_batch(leaf_buffer)
+                leaf_buffer.clear()
+        
+        # PROCESS REMAINING LEAVES
+        if leaf_buffer:
+            self._process_batch(leaf_buffer)
 
-                # EXPAND - add a new child node
-                node.expand(legal_policy)
-
-            #BACKPROPAGATION - update statistics up the tree
-            node.backpropagate(value)
+    def _process_batch(self, leaf_buffer):
+        states = [n.state for n in leaf_buffer]
+        policies, values = self.model.batch_predict(states)
+        
+        for i, node in enumerate(leaf_buffer):
+            # EXPAND ONLY ONCE PER NODE
+            if not node.is_fully_expanded():
+                policy = self._mask_policy_to_legal_moves(policies[i], node.state)
+                node.expand(policy)
+                node.backpropagate(values[i])
 
     def _mask_policy_to_legal_moves(self, policy, state):
         valid_moves = self.game.get_valid_moves(state)
@@ -369,91 +373,90 @@ class AlphaZero:
     def selfPlay(self):
         """selfPlay method with parallel game handling."""
         return_memory = []
+        draw_count = 0
 
         # Initialize games
         games = [ParallelSPG(self.game, self.args) for _ in range(self.args['num_parallel_games'])]
         
         # Continue until all games are finished
         active_games = len(games)
-        max_steps = 100  # Safety limit to prevent infinite games
-        step = 0
         
-        with trange(max_steps, desc="Simulating games") as progress:
-            while active_games > 0 and step < max_steps:
-                step += 1
-                progress.update(1)
-                progress.set_description(f"Active games: {active_games}/{len(games)}, Step: {step}")
+        progress = tqdm(desc="Simulating games")
+        while active_games > 0:
+            progress.update(1)
+            progress.set_description(f"Active games: {active_games}/{len(games)}")
+            
+            # Process each active game individually
+            for game_idx, game in enumerate(games):
+                if not game.active:
+                    continue
+                    
+                # Perform MCTS search for this game
+                if len(game.root.children) == 0:  # Only search if not already expanded
+                    self.mcts.search(game.root)
                 
-                # Process each active game individually
-                for game_idx, game in enumerate(games):
-                    if not game.active:
-                        continue
+                # Get action probabilities from MCTS visit counts
+                action_probs = self.mcts._get_action_probs_from_visits(game.root)
+                
+                # Store the current state and action probabilities
+                game.memory.append((game.state.copy(), action_probs))
+                
+                # Sample an action based on the visit counts and temperature
+                temperature = 1.0 if game.move_count < 30 else 0.1
+                temperature_action_prob = action_probs ** (1 / temperature)
+                
+                # Ensure the distribution is valid
+                if np.sum(temperature_action_prob) > 0:
+                    temperature_action_prob = temperature_action_prob / np.sum(temperature_action_prob)
+                    
+                    # Sample an action
+                    action_idx = np.random.choice(len(temperature_action_prob), p=temperature_action_prob)
+                    action = index_to_move(action_idx)
+                    
+                    if action in game.state.legal_moves:
+                        # Update the game state
+                        game.state = self.game.get_next_state(game.state, action)
+                        game.move_count += 1
                         
-                    # Perform MCTS search for this game
-                    if len(game.root.children) == 0:  # Only search if not already expanded
-                        self.mcts.search(game.state, game.root)
-                    
-                    # Get action probabilities from MCTS visit counts
-                    action_probs = self.mcts._get_action_probs_from_visits(game.root)
-                    
-                    # Store the current state and action probabilities
-                    game.memory.append((game.state.copy(), action_probs))
-                    
-                    # Sample an action based on the visit counts and temperature
-                    temperature_action_prob = action_probs ** (1 / self.args['temperature'])
-                    
-                    # Ensure the distribution is valid
-                    if np.sum(temperature_action_prob) > 0:
-                        temperature_action_prob = temperature_action_prob / np.sum(temperature_action_prob)
+                        # Create a new root node for the updated state
+                        game.root = Node(self.game, self.args, game.state)
                         
-                        # Sample an action
-                        action_idx = np.random.choice(len(temperature_action_prob), p=temperature_action_prob)
-                        action = index_to_move(action_idx)
+                        # Check if the game is over
+                        value, is_terminal = self.game.get_value_and_terminated(game.state)
                         
-                        if action in game.state.legal_moves:
-                            # Update the game state
-                            game.state = self.game.get_next_state(game.state, action)
-                            game.move_count += 1
-                            
-                            # Create a new root node for the updated state
-                            game.root = Node(self.game, self.args, game.state)
-                            
-                            # Check if the game is over
-                            value, is_terminal = self.game.get_value_and_terminated(game.state)
-                            
-                            # Also terminate if too many moves (likely a draw)
-                            if is_terminal or game.move_count >= 100:
-                                if not is_terminal and game.move_count >= 100:
-                                    value = 0  # Draw value for move limit
-                                    
-                                # Game is over, add results to memory
-                                print(f"Game {game_idx} finished after {game.move_count} moves with value {value}")
-                                for hist_state, hist_action_probs in game.memory:
-                                    # For the winner's perspective
-                                    player_perspective_value = value if hist_state.turn == game.state.turn else -value
-                                    return_memory.append((
-                                        ChessGame.board_to_tensor(hist_state),
-                                        hist_action_probs,
-                                        player_perspective_value
-                                    ))
-                                game.active = False
-                                active_games -= 1
-                        else:
-                            # Invalid action, end this game
-                            print(f"Warning: Invalid action selected in game {game_idx}")
+                        # Also terminate if too many moves (likely a draw)
+                        if is_terminal:
+                            # Game is over, add results to memory
+                            if value == 0:
+                                draw_count += 1
+                            for hist_state, hist_action_probs in game.memory:
+                                # For the winner's perspective
+                                player_perspective_value = value if hist_state.turn == game.state.turn else -value
+                                return_memory.append((
+                                    ChessGame.board_to_tensor(hist_state),
+                                    hist_action_probs,
+                                    player_perspective_value
+                                ))
                             game.active = False
                             active_games -= 1
                     else:
-                        # No valid action probabilities, end this game
-                        print(f"Warning: No valid actions in game {game_idx}")
+                        # Invalid action, end this game
+                        print(f"Warning: Invalid action selected in game {game_idx}")
                         game.active = False
                         active_games -= 1
-                
-                # Early termination if all games are inactive
-                if active_games == 0:
-                    break
+                else:
+                    # No valid action probabilities, end this game
+                    print(f"Warning: No valid actions in game {game_idx}")
+                    game.active = False
+                    active_games -= 1
+            
+            # Early termination if all games are inactive
+            if active_games == 0:
+                break
         
-        print(f"Self-play completed: {len(return_memory)} positions collected from {len(games)} games")
+        total_games = len(games)
+        draw_percent = (draw_count / total_games) * 100 if total_games > 0 else 0
+        print(f"Self-play: {len(return_memory)} positions | Draw%: {draw_percent:.1f}%")
         return return_memory
  
     def train(self, memory):
@@ -489,11 +492,11 @@ class AlphaZero:
             loss.backward()
             self.optimizer.step()
 
-            if num_batches > 0:
-                avg_loss = total_loss / num_batches
-                print(f"Training completed. Average loss: {avg_loss:.4f}")
-            else:
-                print("No batches processed during training")
+        if num_batches > 0:
+            avg_loss = total_loss / num_batches
+            print(f"Training completed. Average loss: {avg_loss:.4f}")
+        else:
+            print("No batches processed during training")
 
     def learn(self):
         for iteration in range(self.args['num_iterations']):
@@ -534,14 +537,16 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr = 0.001, weight_decay=0.0001)
 
     args = {
-        'C':2,
-        'num_searches': 50,
-        'num_iterations': 3,
-        'num_selfPlay_iterations': 2,
-        'num_parallel_games': 2,
-        'num_epochs': 2,
-        'batch_size': 32,
-        'temperature': 1.25
+        'C': 2,
+        'num_searches': 500,
+        'num_iterations': 10,
+        'num_selfPlay_iterations': 20,
+        'num_parallel_games': 12,
+        'num_epochs': 10,
+        'batch_size': 256,
+        'mcts_batch_size': 64,
+        'temperature': 1,
+        'dir_alpha': 0.1
     }
 
     alphaZero=AlphaZero(model, optimizer, chessgame, args)

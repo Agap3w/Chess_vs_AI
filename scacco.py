@@ -1,5 +1,5 @@
 """ TO DO: """
-# inizio a teorizzare il reinforcement learning
+# chiudo reinforcement learning
 
 """ MINOR: """
 # evidenzio checkmate (creo draw_checkmate? highlight rosso su re e attacker?)
@@ -28,7 +28,7 @@ import chess
 from AI.heuristic import heuristic_best_move
 from AI.minimax import minimax_best_move
 import AI.supervised_prediction
-import AI.reinforcement_prediction
+import AI.reinf_prediction
 from constants import DIMENSION, SQUARE_SIZE, WIDTH, HEIGHT, LIGHT_COLOR, DARK_COLOR, UNICODE_PIECES, FPS, FONT, FONT_SIZE, PIECE_VALUES, PIECE_POS_TABLE, INTRO, OUTRO
 
 
@@ -96,9 +96,7 @@ class ChessGame:
                     self.predictorS = AI.supervised_prediction.ChessMovePredictor()
                 ai_move = AI.supervised_prediction.supervised_move(self.game_logic.board, self.predictorS)
             elif self.opponent == 4:
-                if self.predictorR is None:
-                    self.predictorR = AI.reinforcement_prediction.ChessMovePredictor()
-                ai_move = self.predictorR.predict_move(self.game_logic.board)
+                ai_move = AI.reinf_prediction.predict_best_move(self.game_logic.board)
             
             # Se esiste una AI best move, eseguo mossa + suono
             if ai_move:
