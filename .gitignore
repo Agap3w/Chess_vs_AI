@@ -1,8 +1,8 @@
 # ignore large dataset
 AI/data/
 AI/resources/chess_model
-AI/resources/model_reinf
-AI/resources/optimizer_reinf
+AI/resources/model_reinf.pt
+AI/resources/optimizer_reinf.pt
 models
 runs
 
