@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
-from AI.reinf_encodeMove import move_to_index, index_to_move
+from reinf_encodeMove import move_to_index, index_to_move
 
 class ChessGame:
     """ basic chess engine """
@@ -43,70 +43,49 @@ class ChessGame:
     @staticmethod
     def board_to_tensor(state):
         """
-        Convert a chess.Board to a tensor representation with 14 planes:
+        Convert a chess.Board to a tensor representation with 16 planes:
         - 12 planes for piece positions (6 piece types × 2 colors)
         - 1 plane for side to move
         - 1 plane for castling rights for current player
-        
-        
-        Returns:
-            tensor: An 8×8×14 numpy array
+        - 1 plane for repetition count
+        - 1 plane for 50-move rule counter
         """
-        # Initialize the planes
-        planes = np.zeros((14, 8, 8), dtype=np.float32)
-        
-        # Piece planes (0-11): 6 piece types × 2 colors
-        # Piece type order: pawn, knight, bishop, rook, queen, king
-        # Color order: white, black
-        piece_plane_map = {
-            chess.PAWN: 0,
-            chess.KNIGHT: 1,
-            chess.BISHOP: 2,
-            chess.ROOK: 3,
-            chess.QUEEN: 4,
-            chess.KING: 5
-        }
-        
-        # Fill piece planes
-        for square in chess.SQUARES:
-            piece = state.piece_at(square)
-            if piece is not None:
-                color_offset = 0 if piece.color == chess.WHITE else 6
-                piece_plane = piece_plane_map[piece.piece_type] + color_offset
-                
-                # Convert chess square to tensor indices
-                rank = 7 - chess.square_rank(square)  # Flip rank for standard orientation
-                file = chess.square_file(square)
-                
-                planes[piece_plane, rank, file] = 1
-        
-        # Side to move plane (12)
-        planes[12, :, :] = float(state.turn)
+        # Initialize the planes and precompute turn to avoid multiple call
+        planes = np.zeros((16, 8, 8), dtype=np.float32)
+        turn = state.turn
+        piece_map = state.piece_map()  
+    
+        # Piece planes (0-11) 
+        if piece_map:  
+            squares = np.array(list(piece_map.keys()))  
+            pieces = np.array([piece_map[sq] for sq in squares])  
+            piece_types = np.array([p.piece_type - 1 for p in pieces])  
+            colors = np.array([int(not p.color) * 6 for p in pieces])  
+            ranks = 7 - (squares // 8)  
+            files = squares % 8  
+            
+            # Advanced indexing (no loops)  
+            planes[piece_types + colors, ranks, files] = 1  
 
-        # Current player's castling rights
-        if state.turn == chess.WHITE:
-            # White king's position
-            planes[13, 7, 4] = 1
-            # White kingside rook if kingside castling is available
-            if state.has_kingside_castling_rights(chess.WHITE):
-                planes[13, 7, 7] = 1
-            # White queenside rook if queenside castling is available
-            if state.has_queenside_castling_rights(chess.WHITE):
-                planes[13, 7, 0] = 1
-        else:  # Black's turn
-            # Black king's position
-            planes[13, 0, 4] = 1
-            # Black kingside rook if kingside castling is available
-            if state.has_kingside_castling_rights(chess.BLACK):
-                planes[13, 0, 7] = 1
-            # Black queenside rook if queenside castling is available
-            if state.has_queenside_castling_rights(chess.BLACK):
-                planes[13, 0, 0] = 1
+        # Side to mvoe plane (12)
+        planes[12, :, :] = float(turn)
+
+        # Castling rights plane (13)
+        row = 7 * int(turn)  # White=7, Black=0
+        planes[13, row, 7] = float(state.has_kingside_castling_rights(turn))
+        planes[13, row, 0] = float(state.has_queenside_castling_rights(turn))
+        planes[13, row, 4] = float(planes[13, row, 7] or planes[13, row, 0])
+
+        # Repetition plan (14)
+        planes[14, :, :] = state.is_repetition(count=2)
         
+        # 50-move plan (15)
+        planes[15, :, :] = state.halfmove_clock / 100.0
+
         return planes
 
 class ResNet(nn.Module):
-    def __init__(self, device, channel=14, num_ResBlock=14, num_hidden=196):
+    def __init__(self, device, channel=16, num_ResBlock=18, num_hidden=256):
         super().__init__()
         self.device = device
         self.startBlock = nn.Sequential(
@@ -120,19 +99,41 @@ class ResNet(nn.Module):
         )
 
         self.policyHead = nn.Sequential(
-            nn.Conv2d(num_hidden, 64, kernel_size=3, padding=1),
+            # Increase policy-specific features
+            nn.Conv2d(num_hidden, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            
+            # Additional policy feature extraction
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
+            
+            # Output layer
             nn.Flatten(),
             nn.Linear(64*8*8, 4672)
         )
 
         self.valueHead = nn.Sequential(
-            nn.Conv2d(num_hidden, channel, kernel_size=3, padding=1),
-            nn.BatchNorm2d(channel),
+            # Spatial Feature Compression
+            nn.Conv2d(num_hidden, 64, kernel_size=3, padding=1),  # Input: 256 channels → Output: 64
+            nn.BatchNorm2d(64),
             nn.ReLU(),
+            
+            # Channel Reduction
+            nn.Conv2d(64, 32, kernel_size=3, padding=1),  # 64 → 32 channels
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            
+            # Global Context Pooling
+            nn.AdaptiveAvgPool2d((1, 1)),  # Reduces 8x8→1x1, output: 32*1*1=32 features
+            
+            # Dense Layers for Evaluation
             nn.Flatten(),
-            nn.Linear(channel*8*8, 1),
+            nn.Linear(32, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),  # Regularization
+            nn.Linear(128, 1),
             nn.Tanh()
         )
 
@@ -170,12 +171,13 @@ class ResNet(nn.Module):
         policy_logits, values = self.forward(batch_tensor)
         
         # Convert policy logits to probabilities
-        policies = F.softmax(policy_logits, dim=1).detach().cpu().numpy()
+        policies = F.softmax(policy_logits, dim=1)
         
-        # Get values as numpy array
-        values = values.detach().cpu().numpy().flatten()
+        #move to cpu at the end
+        policies_np = policies.detach().cpu().numpy()
+        values_np = values.detach().cpu().numpy().flatten()
         
-        return policies, values
+        return policies_np, values_np
     
 class ResBlock(nn.Module):
     def __init__(self, num_hidden):
@@ -229,16 +231,16 @@ class Node:
             q_value = 0
         else:
             q_value =  child.value_sum / child.visit_count
-        return q_value + self.args['C'] * (math.sqrt(self.visit_count)/(child.visit_count + 1)) * child.prior
+        return q_value + self.args['C'] * child.prior * (math.sqrt(self.visit_count)/(1 + child.visit_count)) 
     
     def expand(self, policy):
         if self.parent is None:  # Root node
             legal_indices = np.where(policy > 0)[0]
             if len(legal_indices) > 0:
-                dir_alpha = self.args.get('dir_alpha', 0.3)
+                dir_alpha = self.args['dir_alpha']
                 legal_probs = policy[legal_indices]
                 dir_noise = np.random.dirichlet([dir_alpha] * len(legal_indices))
-                policy[legal_indices] = 0.97 * legal_probs + 0.03 * dir_noise
+                policy[legal_indices] = 0.90 * legal_probs + 0.10 * dir_noise
 
         for action_idx, prob in enumerate(policy):
             if prob > 0:
@@ -360,7 +362,7 @@ class ParallelSPG:
         self.root = Node(game, args, self.state)
         self.memory = []
         self.active = True
-        self.move_count = 0  # Track moves to detect stalemates
+        self.move_count = 0
 
 class AlphaZero: 
     def __init__(self, model, optimizer, game, args):
@@ -369,6 +371,8 @@ class AlphaZero:
         self.game = game
         self.args = args
         self.mcts = MCTS(game, args, model)
+        self.memory_buffer = []
+        self.max_buffer_size = self.args['max_buffer_size']
 
     def selfPlay(self):
         """selfPlay method with parallel game handling."""
@@ -402,7 +406,13 @@ class AlphaZero:
                 game.memory.append((game.state.copy(), action_probs))
                 
                 # Sample an action based on the visit counts and temperature
-                temperature = 1.0 if game.move_count < 30 else 0.1
+                temperature = (
+                    1.5 if game.move_count < 30 else  # High exploration in opening
+                    1.2 if game.move_count < 70 else  # Still diverse in early midgame
+                    0.8 if game.move_count < 100 else  # Some randomness in late midgame
+                    0.3 if game.move_count < 150 else  # Endgame starts stabilizing
+                    0.1  # Near-deterministic in deep endgame
+                )
                 temperature_action_prob = action_probs ** (1 / temperature)
                 
                 # Ensure the distribution is valid
@@ -431,7 +441,7 @@ class AlphaZero:
                                 draw_count += 1
                             for hist_state, hist_action_probs in game.memory:
                                 # For the winner's perspective
-                                player_perspective_value = value if hist_state.turn == game.state.turn else -value
+                                player_perspective_value = value if hist_state.turn == game.state.turn else self.game.get_opponent_value(value)
                                 return_memory.append((
                                     ChessGame.board_to_tensor(hist_state),
                                     hist_action_probs,
@@ -456,7 +466,7 @@ class AlphaZero:
         
         total_games = len(games)
         draw_percent = (draw_count / total_games) * 100 if total_games > 0 else 0
-        print(f"Self-play: {len(return_memory)} positions | Draw%: {draw_percent:.1f}%")
+        tqdm.write(f"Self-play: {len(return_memory)} positions | Draw%: {draw_percent:.1f}%")
         return return_memory
  
     def train(self, memory):
@@ -484,7 +494,7 @@ class AlphaZero:
             policy_loss = F.kl_div(log_policy, policy_target, reduction='batchmean')
             value_loss = F.mse_loss(out_value, value_target)
 
-            loss = policy_loss+value_loss
+            loss = policy_loss+(0.8*value_loss)
             total_loss += loss.item()
             num_batches += 1
 
@@ -501,24 +511,49 @@ class AlphaZero:
     def learn(self):
         for iteration in range(self.args['num_iterations']):
             print(f"\n--- Starting iteration {iteration+1}/{self.args['num_iterations']} ---")
-            memory = []
+            iteration_memory  = []
 
             self.model.eval()
             for spg_iter in range(self.args['num_selfPlay_iterations']):
                 print(f"Self-play iteration {spg_iter+1}/{self.args['num_selfPlay_iterations']}")
-                iteration_memory = self.selfPlay()
-                memory.extend(iteration_memory)
-                print(f"Collected {len(iteration_memory)} examples, total memory: {len(memory)}")
+                new_examples  = self.selfPlay()
+                iteration_memory.extend(new_examples)
+                tqdm.write(f"Collected {len(new_examples)} examples, total memory: {len(iteration_memory)}")
 
-            if not memory:
+            if not iteration_memory:
                 print("Warning: No memory collected during self-play, skipping training")
                 continue
 
+            # Process new examples to add priority
+            prioritized_memory = []
+            for state, policy, value in iteration_memory:
+                # Higher priority for decisive outcomes (wins/losses)
+                priority = 10.0 if abs(value) > 0.9 else 1.0  
+                prioritized_memory.append((state, policy, value, priority))
+            
+            self.memory_buffer = [
+                (state, policy, value, priority * self.args['buffer_decay'])
+                for (state, policy, value, priority) in self.memory_buffer
+            ]
+
+            # Add new examples to the buffer
+            self.memory_buffer.extend(prioritized_memory)
+            
+            # Trim buffer if it exceeds the maximum size
+            if len(self.memory_buffer) > self.max_buffer_size:
+                # Sort by priority (highest first) before trimming
+                self.memory_buffer.sort(key=lambda x: x[3], reverse=True)
+                self.memory_buffer = self.memory_buffer[:self.max_buffer_size]
+            print(f"Buffer size after merging and trimming: {len(self.memory_buffer)}")
+            
+            # Create training dataset with prioritized sampling
+            training_examples = self.sample_from_buffer(self.args['training_examples_per_iter'])
+      
             self.model.train()
-            print(f"Training on {len(memory)} examples for {self.args['num_epochs']} epochs")
+            print(f"Training on {len(training_examples)} examples for {self.args['num_epochs']} epochs")
             for epoch in range(self.args['num_epochs']):
                 print(f"Epoch {epoch+1}/{self.args['num_epochs']}")
-                self.train(memory)
+                self.train(training_examples)
 
             # Save the model after each iteration
             model_path = f"model_{iteration}.pt"
@@ -527,6 +562,24 @@ class AlphaZero:
             torch.save(self.model.state_dict(), model_path)
             torch.save(self.optimizer.state_dict(), optim_path)
 
+    def sample_from_buffer(self, sample_size):
+        """Sample examples from the replay buffer with prioritization."""
+        if not self.memory_buffer:
+            return []
+        
+        # Calculate sampling probabilities based on priorities
+        total_priority = sum(item[3] for item in self.memory_buffer)
+        probabilities = [item[3]/total_priority for item in self.memory_buffer]
+        
+        # Sample indices based on priorities
+        buffer_size = len(self.memory_buffer)
+        sample_size = min(sample_size, buffer_size)
+        indices = np.random.choice(buffer_size, size=sample_size, p=probabilities, replace=True)
+        
+        # Create the training sample without the priority value
+        samples = [self.memory_buffer[i][:3] for i in indices]
+        
+        return samples
 
 def main():
     chessgame = ChessGame()
@@ -534,24 +587,25 @@ def main():
     print(f"Using device: {device}")
 
     model = ResNet(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr = 0.001, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr = 0.002, weight_decay=0.0001)
 
     args = {
-        'C': 2,
-        'num_searches': 500,
-        'num_iterations': 10,
+        'C': 2.5,
+        'num_searches': 800,
+        'num_iterations': 20,
         'num_selfPlay_iterations': 20,
-        'num_parallel_games': 12,
-        'num_epochs': 10,
-        'batch_size': 256,
-        'mcts_batch_size': 64,
-        'temperature': 1,
-        'dir_alpha': 0.1
+        'num_parallel_games': 20,
+        'num_epochs': 12,
+        'batch_size': 512,
+        'mcts_batch_size': 128,
+        'dir_alpha': 0.4,
+        'max_buffer_size': 350000,  # Maximum size of the experience replay buffer
+        'training_examples_per_iter': 150000,  # Number of examples to sample for each training iteration
+        'buffer_decay': 0.85
     }
 
     alphaZero=AlphaZero(model, optimizer, chessgame, args)
     alphaZero.learn()
-    
 
 if __name__ == "__main__":
     main()

@@ -390,3 +390,71 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+    # Initialize the planes
+    planes = np.zeros((14, 8, 8), dtype=np.float32)
+    
+    # Piece planes (0-11): 6 piece types × 2 colors
+    # Piece type order: pawn, knight, bishop, rook, queen, king
+    # Color order: white, black
+    
+    # Fill piece planes
+    for square, piece in state.piece_map.items():
+        planes[piece.piece_type-1 + float(not piece.color)*6, 7 - chess.square_rank(square), chess.square_file(square)] = 1
+
+
+
+    @staticmethod
+    def board_to_tensor(state):
+        """
+        Convert a chess.Board to a tensor representation with 14 planes:
+        - 12 planes for piece positions (6 piece types × 2 colors)
+        - 1 plane for side to move
+        - 1 plane for castling rights for current player
+        
+        
+        Returns:
+            tensor: An 8×8×14 numpy array
+        """
+        # Initialize the planes
+        planes = np.zeros((14, 8, 8), dtype=np.float32)
+        
+        # Piece planes (0-11): 6 piece types × 2 colors
+        # Piece type order: pawn, knight, bishop, rook, queen, king
+        # Color order: white, black
+        piece_plane_map = {
+            chess.PAWN: 0,
+            chess.KNIGHT: 1,
+            chess.BISHOP: 2,
+            chess.ROOK: 3,
+            chess.QUEEN: 4,
+            chess.KING: 5
+        }
+        
+        # Fill piece planes
+        for square in chess.SQUARES:
+            piece = state.piece_at(square)
+            if piece is not None:
+                color_offset = 0 if piece.color == chess.WHITE else 6
+                piece_plane = piece_plane_map[piece.piece_type] + color_offset
+                
+                # Convert chess square to tensor indices
+                rank = 7 - chess.square_rank(square)  # Flip rank for standard orientation
+                file = chess.square_file(square)
+                
+                planes[piece_plane, rank, file] = 1
+
+        #precompute state.turn since i need to call it 4 times 
+        turn = state.turn
+        # Side to move plane (12)
+        planes[12, :, :] = float(turn)
+
+        # Current player's castling rights
+        row = 7 if turn == chess.WHITE else 0  # Precompute row index
+        planes[13, row, 7] = float(state.has_kingside_castling_rights(turn))
+        planes[13, row, 0] = float(state.has_queenside_castling_rights(turn))
+        planes[13, row, 4] = float(planes[13, row, 7] or planes[13, row, 0])
+
+        return planes

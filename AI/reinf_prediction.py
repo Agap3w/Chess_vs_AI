@@ -3,7 +3,7 @@ import chess
 from AI.reinf_alphazero import ChessGame, ResNet, MCTS, Node
 
 
-model_path = r"C:\Users\Matte\main_matte_py\Chess_vs_AI\AI\resources\model_reinf.pt"
+model_path = r"C:\Users\Matte\main_matte_py\Chess_vs_AI\AI\resources\model_7_reinf.pt"
 
 def predict_best_move(board, num_searches=800, exploration_constant=0):
     """
@@ -52,11 +52,8 @@ def predict_best_move(board, num_searches=800, exploration_constant=0):
     
     # Create root node with the state properly set
     # The key fix: We need to pass the board as the state attribute
-    root = Node(None, None, None)  # Create empty node first
-    root.state = board  # Set the state manually
-    root.game = game  # Set the game reference
-    root.args = args  # Set the args
-    
+    root = Node(game, args, board)  # Create empty node first
+   
     # Run MCTS to find best move
     print(f"Starting MCTS search with {num_searches} iterations...")
     mcts.search(root)

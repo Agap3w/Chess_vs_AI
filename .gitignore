@@ -3,6 +3,7 @@ AI/data/
 AI/resources/chess_model
 AI/resources/model_reinf.pt
 AI/resources/optimizer_reinf.pt
+AI/resources/model_7_reinf.pt
 models
 runs
 
