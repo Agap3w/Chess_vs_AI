@@ -6,7 +6,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
+from torch.amp import autocast 
 from reinf_encodeMove import move_to_index, index_to_move
+
+torch.set_float32_matmul_precision('high')
 
 class ChessGame:
     """ basic chess engine """
@@ -35,9 +38,11 @@ class ChessGame:
             return -1, True
         
         # All other terminal states (draws)
-        return 0, True
+        return -0.2, True
 
     def get_opponent_value(self, value):
+        if value == -0.2:
+            return value
         return -value
 
     @staticmethod
@@ -85,7 +90,7 @@ class ChessGame:
         return planes
 
 class ResNet(nn.Module):
-    def __init__(self, device, channel=16, num_ResBlock=18, num_hidden=256):
+    def __init__(self, device, channel=16, num_ResBlock=12, num_hidden=256):
         super().__init__()
         self.device = device
         self.startBlock = nn.Sequential(
@@ -100,18 +105,12 @@ class ResNet(nn.Module):
 
         self.policyHead = nn.Sequential(
             # Increase policy-specific features
-            nn.Conv2d(num_hidden, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(num_hidden, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            
-            # Additional policy feature extraction
-            nn.Conv2d(128, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            
             # Output layer
             nn.Flatten(),
-            nn.Linear(64*8*8, 4672)
+            nn.Linear(32*8*8, 4672)
         )
 
         self.valueHead = nn.Sequential(
@@ -167,11 +166,12 @@ class ResNet(nn.Module):
         # Convert to tensor and move to device
         batch_tensor = torch.tensor(batch_planes, dtype=torch.float32, device=self.device)
         
-        # Forward pass through the model
-        policy_logits, values = self.forward(batch_tensor)
-        
-        # Convert policy logits to probabilities
-        policies = F.softmax(policy_logits, dim=1)
+        with autocast(device_type='cuda'):
+            # Forward pass through the model
+            policy_logits, values = self.forward(batch_tensor)
+            
+            # Convert policy logits to probabilities
+            policies = F.softmax(policy_logits, dim=1)
         
         #move to cpu at the end
         policies_np = policies.detach().cpu().numpy()
@@ -240,7 +240,7 @@ class Node:
                 dir_alpha = self.args['dir_alpha']
                 legal_probs = policy[legal_indices]
                 dir_noise = np.random.dirichlet([dir_alpha] * len(legal_indices))
-                policy[legal_indices] = 0.90 * legal_probs + 0.10 * dir_noise
+                policy[legal_indices] = 0.8 * legal_probs + 0.2 * dir_noise
 
         for action_idx, prob in enumerate(policy):
             if prob > 0:
@@ -365,11 +365,12 @@ class ParallelSPG:
         self.move_count = 0
 
 class AlphaZero: 
-    def __init__(self, model, optimizer, game, args):
+    def __init__(self, model, optimizer, game, args, scheduler=None):
         self.model = model
         self.optimizer = optimizer
         self.game = game
         self.args = args
+        self.scheduler = scheduler
         self.mcts = MCTS(game, args, model)
         self.memory_buffer = []
         self.max_buffer_size = self.args['max_buffer_size']
@@ -407,11 +408,13 @@ class AlphaZero:
                 
                 # Sample an action based on the visit counts and temperature
                 temperature = (
+                    8.0 if game.move_count < 4 else  # High exploration in opening
+                    2.0 if game.move_count < 10 else  # High exploration in opening
                     1.5 if game.move_count < 30 else  # High exploration in opening
                     1.2 if game.move_count < 70 else  # Still diverse in early midgame
-                    0.8 if game.move_count < 100 else  # Some randomness in late midgame
-                    0.3 if game.move_count < 150 else  # Endgame starts stabilizing
-                    0.1  # Near-deterministic in deep endgame
+                    1.0 if game.move_count < 100 else  # Some randomness in late midgame
+                    0.7 if game.move_count < 150 else  # Endgame starts stabilizing
+                    0.5  # Near-deterministic in deep endgame
                 )
                 temperature_action_prob = action_probs ** (1 / temperature)
                 
@@ -437,7 +440,7 @@ class AlphaZero:
                         # Also terminate if too many moves (likely a draw)
                         if is_terminal:
                             # Game is over, add results to memory
-                            if value == 0:
+                            if value == -0.2:
                                 draw_count += 1
                             for hist_state, hist_action_probs in game.memory:
                                 # For the winner's perspective
@@ -528,7 +531,7 @@ class AlphaZero:
             prioritized_memory = []
             for state, policy, value in iteration_memory:
                 # Higher priority for decisive outcomes (wins/losses)
-                priority = 10.0 if abs(value) > 0.9 else 1.0  
+                priority = 15.0 if abs(value) > 0.5 else 1.0  
                 prioritized_memory.append((state, policy, value, priority))
             
             self.memory_buffer = [
@@ -561,6 +564,8 @@ class AlphaZero:
             print(f"Saving model to {model_path}")
             torch.save(self.model.state_dict(), model_path)
             torch.save(self.optimizer.state_dict(), optim_path)
+            if self.scheduler is not None:
+                self.scheduler.step()
 
     def sample_from_buffer(self, sample_size):
         """Sample examples from the replay buffer with prioritization."""
@@ -587,24 +592,34 @@ def main():
     print(f"Using device: {device}")
 
     model = ResNet(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr = 0.002, weight_decay=0.0001)
+    optimizer = torch.optim.SGD(
+        model.parameters(), 
+        lr=0.01,          # Start high, reduce later
+        momentum=0.9, 
+        weight_decay=1e-4  # Match AlphaZero's regularization
+    )
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer, 
+        milestones=[13, 26, 39],  # Reduce LR at iterations specified
+        gamma=0.1            # Reduce by factor of 10 each time
+    )
 
     args = {
-        'C': 2.5,
+        'C': 3.5,
         'num_searches': 800,
-        'num_iterations': 20,
-        'num_selfPlay_iterations': 20,
-        'num_parallel_games': 20,
-        'num_epochs': 12,
-        'batch_size': 512,
-        'mcts_batch_size': 128,
-        'dir_alpha': 0.4,
+        'num_iterations': 50,
+        'num_selfPlay_iterations': 10,
+        'num_parallel_games': 32,
+        'num_epochs': 8,
+        'batch_size': 1024,
+        'mcts_batch_size': 384,
+        'dir_alpha': 0.3,
         'max_buffer_size': 350000,  # Maximum size of the experience replay buffer
         'training_examples_per_iter': 150000,  # Number of examples to sample for each training iteration
-        'buffer_decay': 0.85
+        'buffer_decay': 0.9
     }
 
-    alphaZero=AlphaZero(model, optimizer, chessgame, args)
+    alphaZero=AlphaZero(model, optimizer, chessgame, args, scheduler)
     alphaZero.learn()
 
 if __name__ == "__main__":
