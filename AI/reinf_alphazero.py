@@ -38,10 +38,10 @@ class ChessGame:
             return -1, True
         
         # All other terminal states (draws)
-        return -0.2, True
+        return -0.5, True
 
     def get_opponent_value(self, value):
-        if value == -0.2:
+        if value == -0.5:
             return value
         return -value
 
@@ -104,10 +104,16 @@ class ResNet(nn.Module):
         )
 
         self.policyHead = nn.Sequential(
-            # Increase policy-specific features
-            nn.Conv2d(num_hidden, 32, kernel_size=3, padding=1),
+            # Expand features first
+            nn.Conv2d(num_hidden, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            
+            # Then focus down
+            nn.Conv2d(64, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
+
             # Output layer
             nn.Flatten(),
             nn.Linear(32*8*8, 4672)
@@ -408,13 +414,12 @@ class AlphaZero:
                 
                 # Sample an action based on the visit counts and temperature
                 temperature = (
-                    8.0 if game.move_count < 4 else  # High exploration in opening
-                    2.0 if game.move_count < 10 else  # High exploration in opening
-                    1.5 if game.move_count < 30 else  # High exploration in opening
-                    1.2 if game.move_count < 70 else  # Still diverse in early midgame
+                    8.0 if game.move_count < 8 else  # High exploration in opening
+                    4.0 if game.move_count < 15 else  # High exploration in opening
+                    2.0 if game.move_count < 30 else  # High exploration in opening
+                    1.5 if game.move_count < 70 else  # Still diverse in early midgame
                     1.0 if game.move_count < 100 else  # Some randomness in late midgame
-                    0.7 if game.move_count < 150 else  # Endgame starts stabilizing
-                    0.5  # Near-deterministic in deep endgame
+                    0.7
                 )
                 temperature_action_prob = action_probs ** (1 / temperature)
                 
@@ -440,7 +445,7 @@ class AlphaZero:
                         # Also terminate if too many moves (likely a draw)
                         if is_terminal:
                             # Game is over, add results to memory
-                            if value == -0.2:
+                            if value == -0.5:
                                 draw_count += 1
                             for hist_state, hist_action_probs in game.memory:
                                 # For the winner's perspective
@@ -503,6 +508,7 @@ class AlphaZero:
 
             self.optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
         if num_batches > 0:
@@ -531,7 +537,7 @@ class AlphaZero:
             prioritized_memory = []
             for state, policy, value in iteration_memory:
                 # Higher priority for decisive outcomes (wins/losses)
-                priority = 15.0 if abs(value) > 0.5 else 1.0  
+                priority = 20.0 if abs(value) > 0.5 else 1.0  
                 prioritized_memory.append((state, policy, value, priority))
             
             self.memory_buffer = [
@@ -605,15 +611,15 @@ def main():
     )
 
     args = {
-        'C': 3.5,
-        'num_searches': 800,
+        'C': 4.0,
+        'num_searches': 512,
         'num_iterations': 50,
         'num_selfPlay_iterations': 10,
         'num_parallel_games': 32,
         'num_epochs': 8,
-        'batch_size': 1024,
-        'mcts_batch_size': 384,
-        'dir_alpha': 0.3,
+        'batch_size': 512,
+        'mcts_batch_size': 128,
+        'dir_alpha': 0.4,
         'max_buffer_size': 350000,  # Maximum size of the experience replay buffer
         'training_examples_per_iter': 150000,  # Number of examples to sample for each training iteration
         'buffer_decay': 0.9

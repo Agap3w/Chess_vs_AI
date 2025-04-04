@@ -6,6 +6,7 @@ AI/resources/optimizer_reinf.pt
 AI/resources/model_7_reinf.pt
 models
 runs
+AI/testlog
 
 # ignore cache and bytecode
 __pycache__/
